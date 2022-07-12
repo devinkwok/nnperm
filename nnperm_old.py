@@ -61,7 +61,9 @@ def find_permutations(model_state_dict_g, model_state_dict_f, p=2):
                     if best[2] > curr_loss:
                         best = (argsort_g[:, i_g], argsort_f[:, i_f], curr_loss)
             s.append(best)
-    return s + [(None, None, float('inf'))]
+    found_permutations = s + [(None, None, float('inf'))]
+    s_1, s_2, diffs = list(zip(*found_permutations))
+    return s_1, s_2, diffs
 
 def permutate_state_dict_mlp(model_state_dict, s):
 

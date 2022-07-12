@@ -96,7 +96,7 @@ class TestPermuteNN(unittest.TestCase):
 
     def validate_scaling(self, model, scale):
         state_dict = deepcopy(model.state_dict())
-        normalized = new.canonical_normalization(state_dict)
+        normalized = new.canonical_normalization(state_dict)[0]
         with self.StateUnchangedContextManager(normalized):
             scaled_dict = new.scale_state_dict(normalized, scale)
             for s_1, s_2 in zip(new.inverse_scale(scale), new.get_normalizing_scale(scaled_dict)):
@@ -108,14 +108,14 @@ class TestPermuteNN(unittest.TestCase):
         self.validate_symmetry(old.canonical_renormalization, self.mlp_model, self.mlp_data)
         self.validate_symmetry(lambda x: new.scale_state_dict(x, self.mlp_scale), self.mlp_model, self.mlp_data)
         self.validate_symmetry(new.normalize_batchnorm, self.mlp_model, self.mlp_data)
-        self.validate_symmetry(new.canonical_normalization, self.mlp_model, self.mlp_data)
+        self.validate_symmetry(lambda x: new.canonical_normalization(x)[0], self.mlp_model, self.mlp_data)
         self.validate_scaling(self.mlp_model, self.mlp_scale)
 
     def test_conv_normalization(self):
         # test scaling for convnet
         self.validate_symmetry(lambda x: new.scale_state_dict(x, self.conv_scale), self.conv_model, self.conv_data)
         self.validate_symmetry(new.normalize_batchnorm, self.conv_model, self.conv_data)
-        self.validate_symmetry(new.canonical_normalization, self.conv_model, self.conv_data)
+        self.validate_symmetry(lambda x: new.canonical_normalization(x)[0], self.conv_model, self.conv_data)
         self.validate_scaling(self.conv_model, self.conv_scale)
 
     def validate_permutation_finder(self, finder_fn, model, permutations):
@@ -123,8 +123,7 @@ class TestPermuteNN(unittest.TestCase):
         # with self.StateUnchangedContextManager(state_dict):
         layer_names = filter(lambda x: "weight" in x, state_dict.keys())
         permuted_state_dict = new.permute_state_dict(state_dict, permutations)
-        found_permutations = finder_fn(permuted_state_dict, state_dict)
-        s_1, s_2, diffs = list(zip(*found_permutations))
+        s_1, s_2, diffs = finder_fn(permuted_state_dict, state_dict)
         found_permutations = new.compose_permutation(s_2, new.inverse_permutation(s_1))
         self.assertEqual(len(permutations), len(found_permutations))
         for x, y, d, k in zip(permutations, found_permutations, diffs, layer_names):
