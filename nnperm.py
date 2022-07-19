@@ -1,11 +1,12 @@
 """
 Weight normalization and permutation finding algorithm for MLPs and ConvNets.
 
-Assumptions:
-* batch norm precedes non-linearity
-* if last conv layer has X output channels, final linear layer takes X inputs
+Assumptions made by `nnperm`:
+* BatchNorm precedes non-linearity
+* for ResNets, Conv layer has no bias, but is followed by BatchNorm with bias
+* if last Conv layer has X output channels, final linear layer takes X inputs
     - this means pooling/stride should reduce all image dims
-* network is not going to be trained further (batchnorm running mean/var aren't used)
+* network is not going to be trained further (BatchNorm running mean/var aren't used)
 
 Procedure:
 * roll all batch norms into previous conv so that batch norms are all (1, 0)
@@ -25,6 +26,9 @@ from torch import nn
 """
 Weight normalization
 """
+def _is_weight_param(key, value) -> bool:
+    return "weight" in key and value.dim() > 1
+
 def _w_and_b(state_dict: dict, include_batchnorm=False) -> Iterable:
     w_k, w = None, None
     for k, v in state_dict.items():
@@ -34,7 +38,7 @@ def _w_and_b(state_dict: dict, include_batchnorm=False) -> Iterable:
             assert w is not None, k
             assert w_k[:-len(".weight")] == k[:-len(".bias")]
             assert w.shape[0] == len(v), (k, w.shape, v.shape)
-            if include_batchnorm or w.dim() > 1:
+            if include_batchnorm or _is_weight_param(w_k, w):
                 yield (w_k, w), (k, v)
             w = None
 
@@ -56,7 +60,7 @@ def inverse_scale(scale: list) -> list:
     Returns:
         list: s^{-1} for scaling factors s.
     """
-    return [1 / s for s in scale]
+    return [None if s is None else 1 / s for s in scale]
 
 def get_normalizing_scale(state_dict: dict) -> list:
     """Gets scaling terms that normalize weights to a norm of 1.
@@ -75,7 +79,7 @@ def get_normalizing_scale(state_dict: dict) -> list:
         w = w * _broadcast(scale[-1], w, 1)
         with torch.no_grad():
             scale.append(torch.norm(w.view(w.shape[0], -1), dim=1))
-    scale[-1] = 1  # do not scale outputs
+    scale[-1] = None  # do not scale outputs
     return inverse_scale(scale[1:])  # remove temporary value
 
 def scale_state_dict(state_dict: dict, scale: list, in_place=False) -> dict:
@@ -95,11 +99,14 @@ def scale_state_dict(state_dict: dict, scale: list, in_place=False) -> dict:
         state_dict = deepcopy(state_dict)
     layers = list(_w_and_b(state_dict))
     assert len(scale) == len(layers)
-    s_prev = 1
+    s_prev = None
     for ((w_k, w), (b_k, b)), s in zip(layers, scale):
-        w = w / _broadcast(s_prev, w, 1)  # undo previous layer scale
-        state_dict[w_k] = w * _broadcast(s, w, 0)  # apply current scale
-        state_dict[b_k] = b * s
+        if s_prev is not None:  # undo previous layer scale
+            w = w / _broadcast(s_prev, w, 1)
+        if s is not None:  # apply current scale
+            w = w * _broadcast(s, w, 0)
+            state_dict[b_k] = b * s
+        state_dict[w_k] = w
         s_prev = s
     return state_dict
 
@@ -227,10 +234,10 @@ def geometric_realignment(normalized_state_dict_f: dict, normalized_state_dict_g
             Defaults to nn.MSELoss().
 
     Returns:
-        list: Permutations and loss per layer. Each layer has a tuple (s_f, s_g, loss)
+        tuple: Permutations and loss per layer (s_f, s_g, loss),
             where s_f is the canonical permutation for model f,
             s_g is the canonical permutation for model g,
-            and loss is the difference between the weights of the two models.
+            and loss is all compared differences between the weights of the two models.
     """
     layers_f = list(_w_and_b(normalized_state_dict_f))[:-1]
     layers_g = list(_w_and_b(normalized_state_dict_g))[:-1]
@@ -245,15 +252,16 @@ def geometric_realignment(normalized_state_dict_f: dict, normalized_state_dict_g
             argsort_f = torch.argsort(w_f.reshape(w_f.shape[0], -1), axis=0).transpose(1, 0)
             argsort_g = torch.argsort(w_g.reshape(w_g.shape[0], -1), axis=0).transpose(1, 0)
         best_f, best_g, best_loss = s[0]
+        losses = []
         # transposed so that we iterate over non-output dims
         for idx_f, idx_g in product(argsort_f, argsort_g):
             permuted_w_f = _permute_layer(w_f, idx_f)
             permuted_w_g = _permute_layer(w_g, idx_g)
-            loss = loss_fn(permuted_w_f, permuted_w_g)
-            if loss < best_loss:
-                best_f, best_g, best_loss = idx_f, idx_g, loss
-        s.append((best_f, best_g, best_loss))
-    permutations = s[1:] + [(None, None, 0.)] # remove temporary
+            losses.append(loss_fn(permuted_w_f, permuted_w_g))
+            if losses[-1] < best_loss:
+                best_f, best_g, best_loss = idx_f, idx_g, losses[-1]
+        s.append((best_f, best_g, torch.tensor(losses)))
+    permutations = s[1:] + [(None, None, 0.)] # remove temporary, add identity to last layer
     s_f, s_g, loss = list(zip(*permutations))
     return s_f, s_g, loss
 
@@ -274,27 +282,40 @@ def canonical_permutation(normalized_state_dict_f: dict, normalized_state_dict_g
     permuted_state_dict_g = permute_state_dict(normalized_state_dict_g, s_g)
     return permuted_state_dict_f, permuted_state_dict_g
 
-def random_transform(state_dict: dict, scale=True, permute=True,
-        scale_distribution=lambda x: np.random.chisquare(1, x)
+"""
+Random transforms
+"""
+def torch_chisq(x):
+    return torch.randn(x)**2
+
+def random_scale(state_dict: dict, n_layers=-1,
+        scale_distribution=torch_chisq,
+    ) -> list:
+    scale = [scale_distribution(v.shape[0]).to(device=v.device) \
+        for k, v in state_dict.items() if _is_weight_param(k, v)]
+    scale[-1] = None
+    if n_layers > 0:
+        for i in range(n_layers, len(scale)):
+            scale[i] = None
+    return scale
+
+def random_permutation(state_dict: dict, n_layers=-1) -> list:
+    permutation = [torch.randperm(v.shape[0]).to(device=v.device) \
+        for k, v in state_dict.items() if _is_weight_param(k, v)]
+    permutation[-1] = None
+    if n_layers > 0:
+        for i in range(n_layers, len(permutation)):
+            permutation[i] = None
+    return permutation
+
+def random_transform(state_dict: dict, scale=True, permute=True, n_layers=-1,
+        scale_distribution=torch_chisq,
     ) -> dict:
-    layers = list(_w_and_b(state_dict))
-    output_dims = [w.shape[0] for (_, w), _ in layers]
     if permute:
-        permutation = [np.random.permutation(d) for d in output_dims]
-        permutation[-1] = None
+        permutation = random_permutation(state_dict, n_layers=n_layers)
         state_dict = permute_state_dict(state_dict, permutation)
     if scale:
-        scale = [scale_distribution(d) for d in output_dims]
-        scale[-1] = 1
+        scale = random_scale(state_dict, n_layers=n_layers,
+                    scale_distribution=scale_distribution)
         state_dict = scale_state_dict(state_dict, scale)
-    return state_dict
-
-def canonical_form(state_dict_f: dict, state_dict_g: dict, loss_fn=nn.MSELoss(), normalize=True, permute=True) -> tuple:
-    """Convenience function combining canonical_normalization and canonical_permutation.
-    """
-    if normalize:
-        state_dict_f, _ = canonical_normalization(state_dict_f)
-        state_dict_g, _ = canonical_normalization(state_dict_g)
-    if permute:
-        state_dict_f, state_dict_g = canonical_permutation(state_dict_f, state_dict_g)
-    return state_dict_f, state_dict_g
+    return state_dict, permutation, scale

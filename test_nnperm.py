@@ -5,7 +5,13 @@ import numpy as np
 import torch
 from torch import nn
 
-from nnperm_utils import evaluate_per_sample
+import sys
+sys.path.append("open_lth")
+from open_lth.models import cifar_resnet
+from open_lth.models import cifar_vgg
+from open_lth.models.initializers import kaiming_normal
+
+from nnperm_utils import evaluate_per_sample, multiplicative_weight_noise
 import nnperm_old as old
 import nnperm as new
 
@@ -17,57 +23,53 @@ class TestPermuteNN(unittest.TestCase):
         return torch.utils.data.DataLoader(dataset, batch_size=len(dataset))
 
     def setUp(self) -> None:
-        import sys
-        sys.path.append("open_lth")
-        from open_lth.models.mnist_lenet import Model
-        from open_lth.models.initializers import kaiming_normal
         ## Setup
-        self.data = self.make_dataloader(torch.randn([10, 1, 28, 28]))
-        self.model = Model.get_model_from_name("mnist_lenet_20_10", initializer=kaiming_normal)
-        self.perm = [np.random.permutation(v.shape[0]) for k, v in self.model.state_dict().items() if "weight" in k]
-        self.perm[-1] = None
-
-        a = 10  # hidden outputs, layer 1
-        b = 5  # hidden outputs, layer 2
-        self.mlp_data = self.make_dataloader(torch.randn([10, 20]))
-        self.mlp_model = nn.Sequential(
-                nn.Linear(20, a),
-                nn.ReLU(),
-                nn.Linear(a, b),
-                nn.ReLU(),
-                nn.Linear(b, 2),
-            )
-        self.mlp_scale = [
-            np.full(a, 0.5),
-            np.random.randn(b)**2,
-            1,
+        self.mlp_models = [
+            (
+                nn.Sequential(
+                    nn.Linear(20, 10),
+                    nn.ReLU(),
+                    nn.Linear(10, 5),
+                    nn.ReLU(),
+                    nn.Linear(5, 2),
+                ),
+                self.make_dataloader(torch.randn([10, 20])),
+                [
+                    np.full(10, 0.5),
+                    np.random.randn(5)**2,
+                    None,
+                ],
+                [
+                    np.random.permutation(10),
+                    np.random.permutation(5),
+                    None,
+                ],
+            ),
         ]
-        self.mlp_perm = [
-            np.random.permutation(a),
-            np.random.permutation(b),
-            None,
-        ]
-        self.conv_data = self.make_dataloader(torch.randn([10, 3, 9, 9]))
-        self.conv_model = nn.Sequential(
-                nn.Conv2d(3, a, 3),
-                nn.ReLU(),
-                nn.BatchNorm2d(a),
-                nn.Conv2d(a, b, 3),
-                nn.ReLU(),
-                nn.BatchNorm2d(b),
-                nn.AdaptiveMaxPool2d([1, 1]),
-                nn.Flatten(start_dim=1),
-                nn.Linear(b, 2),
-            )
-        self.conv_scale = [
-            np.full(a, 0.5),
-            np.random.randn(b)**2,
-            1,
-        ]
-        self.conv_perm = [
-            np.random.permutation(a),
-            np.random.permutation(b),
-            None,
+        self.conv_models = [
+            (
+                nn.Sequential(
+                    nn.Conv2d(3, 10, 3),
+                    nn.BatchNorm2d(10),
+                    nn.ReLU(),
+                    nn.Conv2d(10, 5, 3),
+                    nn.BatchNorm2d(5),
+                    nn.ReLU(),
+                    nn.AdaptiveMaxPool2d([1, 1]),
+                    nn.Flatten(start_dim=1),
+                    nn.Linear(5, 2),
+                ),
+                self.make_dataloader(torch.randn([10, 3, 9, 9])),
+            ),
+            ## these models take a long time to run
+            # (
+            #     cifar_vgg.Model.get_model_from_name("cifar_vgg_11", initializer=kaiming_normal),
+            #     self.make_dataloader(torch.randn([10, 3, 32, 32])),
+            # ),
+            # (
+            #     cifar_resnet.Model.get_model_from_name("cifar_resnet_8_4", initializer=kaiming_normal),
+            #     self.make_dataloader(torch.randn([10, 3, 32, 32])),
+            # ),
         ]
 
     class StateUnchangedContextManager():
@@ -100,23 +102,29 @@ class TestPermuteNN(unittest.TestCase):
         with self.StateUnchangedContextManager(normalized):
             scaled_dict = new.scale_state_dict(normalized, scale)
             for s_1, s_2 in zip(new.inverse_scale(scale), new.get_normalizing_scale(scaled_dict)):
-                np.testing.assert_allclose(np.array(s_1), np.array(s_2), atol=1e-3)
+                if s_1 is None:
+                    self.assertIsNone(s_2)
+                else:
+                    np.testing.assert_allclose(np.array(s_1), np.array(s_2), atol=1e-3)
             print("Testing scales, scales match")
 
     def test_mlp_normalization(self):
         # test scaling for mlp
-        self.validate_symmetry(old.canonical_renormalization, self.mlp_model, self.mlp_data)
-        self.validate_symmetry(lambda x: new.scale_state_dict(x, self.mlp_scale), self.mlp_model, self.mlp_data)
-        self.validate_symmetry(new.normalize_batchnorm, self.mlp_model, self.mlp_data)
-        self.validate_symmetry(lambda x: new.canonical_normalization(x)[0], self.mlp_model, self.mlp_data)
-        self.validate_scaling(self.mlp_model, self.mlp_scale)
+        for model, data, scale, _ in self.mlp_models:
+            self.validate_symmetry(old.canonical_renormalization, model, data)
+            self.validate_symmetry(lambda x: new.scale_state_dict(x, scale), model, data)
+            self.validate_symmetry(new.normalize_batchnorm, model, data)
+            self.validate_symmetry(lambda x: new.canonical_normalization(x)[0], model, data)
+            self.validate_scaling(model, scale)
 
     def test_conv_normalization(self):
         # test scaling for convnet
-        self.validate_symmetry(lambda x: new.scale_state_dict(x, self.conv_scale), self.conv_model, self.conv_data)
-        self.validate_symmetry(new.normalize_batchnorm, self.conv_model, self.conv_data)
-        self.validate_symmetry(lambda x: new.canonical_normalization(x)[0], self.conv_model, self.conv_data)
-        self.validate_scaling(self.conv_model, self.conv_scale)
+        for model, data in self.conv_models:
+            scale = new.random_scale(model.state_dict())
+            self.validate_symmetry(lambda x: new.scale_state_dict(x, scale), model, data)
+            self.validate_symmetry(new.normalize_batchnorm, model, data)
+            self.validate_symmetry(lambda x: new.canonical_normalization(x)[0], model, data)
+            self.validate_scaling(model, scale)
 
     def validate_permutation_finder(self, finder_fn, model, permutations):
         state_dict = deepcopy(model.state_dict())
@@ -130,27 +138,60 @@ class TestPermuteNN(unittest.TestCase):
             if x is None:
                 self.assertIsNone(y)
             else:
-                if np.any(x != y.numpy()):
-                    self.assertFalse("Failed to find permutation for layer", k, d.item(), x, y)
-                else:
-                    print("Found permutation", x, "for layer", k)
-                    self.assertLess(abs(d), 1e-15)
+                print("Found permutation", x, "for layer", k)
+                self.assertLess(torch.min(d), 1e-15)
 
     def test_mlp_permutation(self):
-        self.validate_symmetry(lambda x: old.permutate_state_dict_mlp(x, self.mlp_perm), self.mlp_model, self.mlp_data)
-        self.validate_symmetry(lambda x: new.permute_state_dict(x, self.mlp_perm), self.mlp_model, self.mlp_data)
-        self.validate_permutation_finder(old.find_permutations, self.mlp_model, self.mlp_perm)
-        self.validate_permutation_finder(new.geometric_realignment, self.mlp_model, self.mlp_perm)
-        self.validate_permutation_finder(new.geometric_realignment, self.mlp_model, self.mlp_perm)
-
-        ## these are more expensive to run:
-        # self.validate_symmetry(lambda x: new.permute_state_dict(x, self.perm), self.model, self.data)
-        # self.validate_permutation_finder(new.geometric_realignment, self.model, self.perm)
+        for model, data, _, perm in self.mlp_models:
+            self.validate_symmetry(lambda x: old.permutate_state_dict_mlp(x, perm), model, data)
+            self.validate_symmetry(lambda x: new.permute_state_dict(x, perm), model, data)
+            self.validate_permutation_finder(old.find_permutations, model, perm)
+            self.validate_permutation_finder(new.geometric_realignment, model, perm)
+            self.validate_permutation_finder(new.geometric_realignment, model, perm)
 
     def test_conv_permutation(self):
-        self.validate_symmetry(lambda x: new.permute_state_dict(x, self.conv_perm), self.conv_model, self.conv_data)
-        self.validate_permutation_finder(new.geometric_realignment, self.conv_model, self.conv_perm)
+        for model, data in self.conv_models:
+            perm = new.random_permutation(model.state_dict())
+            self.validate_symmetry(lambda x: new.permute_state_dict(x, perm), model, data)
+            self.validate_permutation_finder(new.geometric_realignment, model, perm)
 
+    def test_random_transform(self):
+        for model, data, scale, perm in self.mlp_models:
+            scale = new.random_scale(model.state_dict(), n_layers=1)
+            self.assertEqual(len(scale), 3)
+            self.assertEqual(scale[0].shape, (10,))
+            self.assertIsNone(scale[1])
+            self.assertIsNone(scale[2])
+            permutation = new.random_permutation(model.state_dict(), n_layers=2)
+            self.assertEqual(len(permutation), 3)
+            self.assertIsNotNone(permutation[0])
+            self.assertIsNotNone(permutation[1])
+            self.assertIsNone(permutation[2])
+
+    def test_weight_noise(self):
+
+        def assert_param_noise(state_dict, is_noisy):
+            has_noise = [torch.any(v != 1).item() for v in state_dict.values()]
+            np.testing.assert_array_equal(has_noise, is_noisy)
+
+        for model, _, _, _ in self.mlp_models:
+            state_dict = model.state_dict()
+            n_params = len(state_dict)
+            for k, v in state_dict.items():
+                state_dict[k] = torch.ones_like(v)
+            noisy = multiplicative_weight_noise(state_dict, 0.5)
+            assert_param_noise(noisy, [True] * n_params)
+            noisy = multiplicative_weight_noise(state_dict, 0.5, n_layers=1)
+            assert_param_noise(noisy, [True] + [False] * (n_params - 1))
+            noisy = multiplicative_weight_noise(state_dict, 0.5, include_keywords=["weight"])
+            assert_param_noise(noisy, [True if "weight" in k else False for k in state_dict.keys()])
+            noisy = multiplicative_weight_noise(state_dict, 0.5, exclude_keywords=["bias"])
+            assert_param_noise(noisy, [False if "bias" in k else True for k in state_dict.keys()])
+            noisy = multiplicative_weight_noise(state_dict, 0.5,
+                include_keywords=["weight"], exclude_keywords=["0"])
+            assert_param_noise(noisy, [True if "weight" in k and "0" not in k else False for k in state_dict.keys()])
+            noisy = multiplicative_weight_noise(state_dict, 0.5, n_layers=2, include_keywords=["weight"])
+            assert_param_noise(noisy, [True, False, True] + [False] * (n_params - 3))
 
 if __name__ == "__main__":
     unittest.main()
