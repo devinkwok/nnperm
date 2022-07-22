@@ -75,13 +75,13 @@ def get_normalizing_scale(state_dict: dict) -> list:
             is either a number (integer or float) or a ndarray-like
             with length equal to the output dimension of the layer.
     """
-    layers = list(_w_and_b(state_dict))
-    scale = [1]  # temporary value
-    for (w_k, w), (b_k, b) in layers:
-        w = w * _broadcast(scale[-1], w, 1)
-        with torch.no_grad():
+    with torch.no_grad():
+        layers = list(_w_and_b(state_dict))
+        scale = [1]  # temporary value
+        for (w_k, w), (b_k, b) in layers:
+            w = w * _broadcast(scale[-1], w, 1)
             scale.append(torch.norm(w.view(w.shape[0], -1), dim=1))
-    scale[-1] = None  # do not scale outputs
+        scale[-1] = None  # do not scale outputs
     return inverse_scale(scale[1:])  # remove temporary value
 
 def scale_state_dict(state_dict: dict, scale: list, in_place=False) -> dict:
@@ -235,14 +235,15 @@ def _cached_alignment(matrix_f, matrix_g, loss_fn=nn.MSELoss(), max_search=-1):
         argsort_g = torch.argsort(matrix_g, axis=0).T  # transpose to iterate over non-output dims
         # cache losses so they don't have to be generated every iteration
         losses_per_pair = torch.empty(len(matrix_f), len(matrix_g))
-        for i, j in tqdm(product(range(len(matrix_f)), range(len(matrix_g))), total=len(matrix_f)*len(matrix_g)):
+        for i, j in tqdm(product(range(len(matrix_f)), range(len(matrix_g))
+                        ), total=len(matrix_f)*len(matrix_g)):
             losses_per_pair[i, j] = loss_fn(matrix_f[i], matrix_g[j])
-    best_f, best_g, best_loss = None, None, float('inf')
-    losses = []
-    for idx_f, idx_g in tqdm(product(argsort_f, argsort_g), total=len(argsort_f)*len(argsort_g)):
-        losses.append(torch.mean(losses_per_pair[idx_f, idx_g]))
-        if losses[-1] < best_loss:
-            best_f, best_g, best_loss = idx_f, idx_g, losses[-1]
+        best_f, best_g, best_loss = None, None, float('inf')
+        losses = []
+        for idx_f, idx_g in tqdm(product(argsort_f, argsort_g), total=len(argsort_f)*len(argsort_g)):
+            losses.append(torch.mean(losses_per_pair[idx_f, idx_g]))
+            if losses[-1] < best_loss:
+                best_f, best_g, best_loss = idx_f, idx_g, losses[-1]
     return best_f, best_g, torch.tensor(losses)
 
 def _alignment(matrix_f, matrix_g, loss_fn=nn.MSELoss(), max_search=-1):
@@ -250,15 +251,15 @@ def _alignment(matrix_f, matrix_g, loss_fn=nn.MSELoss(), max_search=-1):
         truncated_f = matrix_f[:, 0:min(max_search, matrix_f.shape[1])]
         argsort_f = torch.argsort(truncated_f, axis=0).T
         argsort_g = torch.argsort(matrix_g, axis=0).T  # transpose to iterate over non-output dims
-    best_f, best_g, best_loss = None, None, float('inf')
-    losses = []
-    for i in tqdm(range(len(argsort_f))):
-        permuted_f = _permute_layer(matrix_f, argsort_f[i])
-        for j in range(len(argsort_g)):
-            permuted_g = _permute_layer(matrix_g, argsort_g[j])
-            losses.append(loss_fn(permuted_f, permuted_g))
-            if losses[-1] < best_loss:
-                best_f, best_g, best_loss = argsort_f[i], argsort_g[j], losses[-1]
+        best_f, best_g, best_loss = None, None, float('inf')
+        losses = []
+        for i in tqdm(range(len(argsort_f))):
+            permuted_f = _permute_layer(matrix_f, argsort_f[i])
+            for j in range(len(argsort_g)):
+                permuted_g = _permute_layer(matrix_g, argsort_g[j])
+                losses.append(loss_fn(permuted_f, permuted_g))
+                if losses[-1] < best_loss:
+                    best_f, best_g, best_loss = argsort_f[i], argsort_g[j], losses[-1]
     return best_f, best_g, torch.tensor(losses)
 
 def geometric_realignment(normalized_state_dict_f: dict, normalized_state_dict_g: dict,
