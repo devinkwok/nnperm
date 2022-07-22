@@ -18,6 +18,7 @@ Procedure:
 from copy import deepcopy
 from itertools import product
 from typing import Iterable
+from tqdm import tqdm
 import torch
 import numpy as np
 from torch import nn
@@ -98,7 +99,7 @@ def scale_state_dict(state_dict: dict, scale: list, in_place=False) -> dict:
     if not in_place:
         state_dict = deepcopy(state_dict)
     layers = list(_w_and_b(state_dict))
-    assert len(scale) == len(layers)
+    assert len(scale) == len(layers), (len(scale), len(layers))
     s_prev = None
     for ((w_k, w), (b_k, b)), s in zip(layers, scale):
         if s_prev is not None:  # undo previous layer scale
@@ -154,6 +155,9 @@ def canonical_normalization(state_dict: dict) -> dict:
 """
 Weight permutation
 """
+def _is_shortcut(key, value) -> bool:
+    return "shortcut" in key
+
 def _permute_layer(weight: np.ndarray, permutation: list, on_output=True) -> np.ndarray:
     if permutation is None:
         return weight
@@ -223,7 +227,9 @@ def compose_permutation(permutation_f: list, permutation_g: list) -> list:
             permutations.append(s[t])
     return permutations
 
-def geometric_realignment(normalized_state_dict_f: dict, normalized_state_dict_g: dict, loss_fn=nn.MSELoss()) -> list:
+def geometric_realignment(normalized_state_dict_f: dict, normalized_state_dict_g: dict,
+        loss_fn=nn.MSELoss(), max_search=100, cache_permutations=True
+    ) -> list:
     """Finds permutation of weights that minimizes difference between two neural nets.
     Uses Tom's algorithm (see writeup).
 
@@ -244,22 +250,30 @@ def geometric_realignment(normalized_state_dict_f: dict, normalized_state_dict_g
     assert len(layers_f) == len(layers_g)
     s = [(None, None, float('inf'))]  # temporary
     for ((w_k, w_f), _), ((_, w_g), _) in zip(layers_f, layers_g):
-        print(f"Aligning {w_k}...")
         assert w_f.shape == w_g.shape
         w_f = _permute_layer(w_f, s[-1][0], on_output=False)
         w_g = _permute_layer(w_g, s[-1][1], on_output=False)
         with torch.no_grad():
-            argsort_f = torch.argsort(w_f.reshape(w_f.shape[0], -1), axis=0).transpose(1, 0)
+            # limit number of positions to search for speed
+            limited_weights = w_f.reshape(w_f.shape[0], -1)[:, 0:min(max_search, w_f.shape[1])]
+            argsort_f = torch.argsort(limited_weights, axis=0).transpose(1, 0)
             argsort_g = torch.argsort(w_g.reshape(w_g.shape[0], -1), axis=0).transpose(1, 0)
+            # cache permutations so they don't have to be generated every iteration
+            permuted_w_f = torch.stack([_permute_layer(w_f, i) for i in argsort_f], axis=0)
+            if cache_permutations:
+                permuted_w_g = torch.stack([_permute_layer(w_g, i) for i in argsort_g], axis=0)
+        print(f"Aligning {w_k} ({len(argsort_g)} non-output positions {len(argsort_g)**2} max pairs)...")
         best_f, best_g, best_loss = s[0]
         losses = []
         # transposed so that we iterate over non-output dims
-        for idx_f, idx_g in product(argsort_f, argsort_g):
-            permuted_w_f = _permute_layer(w_f, idx_f)
-            permuted_w_g = _permute_layer(w_g, idx_g)
-            losses.append(loss_fn(permuted_w_f, permuted_w_g))
+        for i, j in tqdm(product(range(len(argsort_f)), range(len(argsort_g))), total=len(argsort_f) * len(argsort_g)):
+            if cache_permutations:
+                permuted_g = permuted_w_g[j]
+            else:
+                permuted_g = _permute_layer(w_g, argsort_g[j])
+            losses.append(loss_fn(permuted_w_f[i], permuted_g))
             if losses[-1] < best_loss:
-                best_f, best_g, best_loss = idx_f, idx_g, losses[-1]
+                best_f, best_g, best_loss = argsort_f[i], argsort_g[j], losses[-1]
         s.append((best_f, best_g, torch.tensor(losses)))
     permutations = s[1:] + [(None, None, 0.)] # remove temporary, add identity to last layer
     s_f, s_g, loss = list(zip(*permutations))

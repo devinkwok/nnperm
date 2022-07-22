@@ -17,6 +17,7 @@ parser.add_argument('--loss', required=True, type=named_loss_fn)
 parser.add_argument('--train_data', default=False, action="store_true")
 parser.add_argument('--barrier_resolution', default=11, type=int)
 parser.add_argument('--n_examples', default=10000, type=int)
+parser.add_argument('--max_search', default=100000, type=int)
 parser.add_argument('--ckpt_root', default="../../open_lth_data/", type=Path)
 parser.add_argument('--device', default="cuda", type=str)
 args = parser.parse_args()
@@ -36,6 +37,6 @@ for i in range(1, args.n_replicates + 1):
         print(f"Computing error barriers for {i}, {j}")
         state_dict_f = load_open_lth_state_dict(ckpt_dir, i, device=args.device)
         state_dict_g = load_open_lth_state_dict(ckpt_dir, j, device=args.device)
-        values = align_and_error(model, state_dict_f, state_dict_g,
-                                dataloader, args.barrier_resolution, args.loss)
+        values = align_and_error(model, state_dict_f, state_dict_g, dataloader,
+                            args.barrier_resolution, args.loss, args.max_search)
         torch.save(values, save_dir / f"errors_{i}_{j}.pt")
