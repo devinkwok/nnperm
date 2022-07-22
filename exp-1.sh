@@ -19,6 +19,7 @@ else
     source $SLURM_TMPDIR/env/bin/activate
 fi
 
+# VGG
 CKPTS=(train_7312e802e619673d23c7a02eba8aee52)
 # MLP
 #    train_574e51abc295d8da78175b320504f2ba  \

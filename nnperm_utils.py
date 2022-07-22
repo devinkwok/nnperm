@@ -142,10 +142,12 @@ def align_and_error(model, state_dict_f, state_dict_g, dataloader, n_samples, lo
 
     normalized_f, scale_f = canonical_normalization(state_dict_f)
     normalized_g, scale_g = canonical_normalization(state_dict_g)
-    s_f, s_g, loss = geometric_realignment(state_dict_f, state_dict_g, loss_fn=loss_fn, max_search=max_search)
+    s_f, s_g, loss = geometric_realignment(state_dict_f, state_dict_g,
+        loss_fn=loss_fn, max_search=max_search, cache=True)
     permuted_f = permute_state_dict(state_dict_f, s_f)
     permuted_g = permute_state_dict(state_dict_g, s_g)
-    np_s_f, np_s_g, np_loss = geometric_realignment(normalized_f, normalized_g, loss_fn=loss_fn)
+    np_s_f, np_s_g, np_loss = geometric_realignment(normalized_f, normalized_g,
+        loss_fn=loss_fn, max_search=max_search, cache=True)
     norm_and_perm_f = permute_state_dict(normalized_f, np_s_f)
     norm_and_perm_g = permute_state_dict(normalized_g, np_s_g)
 

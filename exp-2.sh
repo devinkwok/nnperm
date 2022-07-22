@@ -19,9 +19,11 @@ else
     source $SLURM_TMPDIR/env/bin/activate
 fi
 
-CKPTS=(train_574e51abc295d8da78175b320504f2ba  \
+CKPTS=(  \
     train_7312e802e619673d23c7a02eba8aee52  \
     train_9d0811cc67a44e1ec85e702a5e01570f)
+# MLP
+#    train_574e51abc295d8da78175b320504f2ba  \
 # ResNet does not work yet
     # train_71bc92a970b64a76d7ab7681764b0021  \
 LOSS=(L1 L2)
