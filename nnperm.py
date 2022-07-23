@@ -228,42 +228,46 @@ def compose_permutation(permutation_f: list, permutation_g: list) -> list:
             permutations.append(s[t])
     return permutations
 
-def _cached_alignment(matrix_f, matrix_g, loss_fn=nn.MSELoss(), max_search=-1):
+def _alignment(matrix_f, matrix_g, loss_fn=nn.MSELoss(), max_search=-1, keep_loss="summary", cache=True):
+    if not (keep_loss == "all" or keep_loss == "summary" or keep_loss == "single"):
+        raise ValueError(f"Invalid keep_loss {keep_loss}")
     with torch.no_grad():
         truncated_f = matrix_f[:, 0:min(max_search, matrix_f.shape[1])]
         argsort_f = torch.argsort(truncated_f, axis=0).T
         argsort_g = torch.argsort(matrix_g, axis=0).T  # transpose to iterate over non-output dims
-        # cache losses so they don't have to be generated every iteration
-        losses_per_pair = torch.empty(len(matrix_f), len(matrix_g))
-        for i, j in tqdm(product(range(len(matrix_f)), range(len(matrix_g))
-                        ), total=len(matrix_f)*len(matrix_g)):
-            losses_per_pair[i, j] = loss_fn(matrix_f[i], matrix_g[j])
+        if cache:  # cache losses so they don't have to be generated every iteration
+            losses_per_pair = torch.empty(len(matrix_f), len(matrix_g))
+            for i, j in tqdm(product(range(len(matrix_f)), range(len(matrix_g))
+                            ), total=len(matrix_f)*len(matrix_g)):
+                losses_per_pair[i, j] = loss_fn(matrix_f[i], matrix_g[j])
+        # go through all pairs of positions, saving permutation with lowest loss
         best_f, best_g, best_loss = None, None, float('inf')
-        losses = []
-        for idx_f, idx_g in tqdm(product(argsort_f, argsort_g), total=len(argsort_f)*len(argsort_g)):
-            losses.append(torch.mean(losses_per_pair[idx_f, idx_g]))
-            if losses[-1] < best_loss:
-                best_f, best_g, best_loss = idx_f, idx_g, losses[-1]
-    return best_f, best_g, torch.tensor(losses)
-
-def _alignment(matrix_f, matrix_g, loss_fn=nn.MSELoss(), max_search=-1):
-    with torch.no_grad():
-        truncated_f = matrix_f[:, 0:min(max_search, matrix_f.shape[1])]
-        argsort_f = torch.argsort(truncated_f, axis=0).T
-        argsort_g = torch.argsort(matrix_g, axis=0).T  # transpose to iterate over non-output dims
-        best_f, best_g, best_loss = None, None, float('inf')
-        losses = []
+        loss_stats = []
         for i in tqdm(range(len(argsort_f))):
-            permuted_f = _permute_layer(matrix_f, argsort_f[i])
+            if not cache:  # (not cached) generate each f permutation once only
+                permuted_f = _permute_layer(matrix_f, argsort_f[i])
+            if keep_loss != "single":
+                losses = torch.empty(len(argsort_g))
             for j in range(len(argsort_g)):
-                permuted_g = _permute_layer(matrix_g, argsort_g[j])
-                losses.append(loss_fn(permuted_f, permuted_g))
-                if losses[-1] < best_loss:
-                    best_f, best_g, best_loss = argsort_f[i], argsort_g[j], losses[-1]
-    return best_f, best_g, torch.tensor(losses)
+                if cache:  # (cached) look up pairwise losses using permutations
+                    loss = torch.mean(losses_per_pair[argsort_f[i], argsort_g[j]])
+                else:  # (not cached) permute g and calculate loss
+                    permuted_g = _permute_layer(matrix_g, argsort_g[j])
+                    loss = loss_fn(permuted_f, permuted_g)
+                if loss < best_loss:
+                    best_f, best_g, best_loss = argsort_f[i], argsort_g[j], loss
+                if keep_loss != "single":
+                    losses[j] = loss
+            if keep_loss == "all":
+                loss_stats.append(losses)
+            elif keep_loss == "summary":
+                loss_stats.append(torch.tensor([torch.min(losses), *torch.std_mean(losses), torch.max(losses)]))
+        if keep_loss == "single":
+            loss_stats = [best_loss]
+    return best_f, best_g, torch.stack(loss_stats)
 
 def geometric_realignment(normalized_state_dict_f: dict, normalized_state_dict_g: dict,
-        loss_fn=nn.MSELoss(), max_search=-1, cache=True,
+        loss_fn=nn.MSELoss(), max_search=-1, cache=True, keep_loss="summary",
     ) -> list:
     """Finds permutation of weights that minimizes difference between two neural nets.
     Uses Tom's algorithm (see writeup).
@@ -277,6 +281,9 @@ def geometric_realignment(normalized_state_dict_f: dict, normalized_state_dict_g
             min(max_search, total_weights) * total_weights. Defaults to -1 (search all pairs).
         cache (bool): If True, use memory to store losses per output pair (faster),
             otherwise computes permutations and losses on the fly. Defaults to True.
+        keep_losses (str): If "all", return all pairwise losses. If "summary",
+            return min, mean, std, max for each search position in f.
+            If "single" return min over entire search.
 
     Returns:
         tuple: Permutations and loss per layer (s_f, s_g, loss),
@@ -293,10 +300,8 @@ def geometric_realignment(normalized_state_dict_f: dict, normalized_state_dict_g
         w_f = _permute_layer(w_f, s[-1][0], on_output=False).reshape(w_f.shape[0], -1)
         w_g = _permute_layer(w_g, s[-1][1], on_output=False).reshape(w_g.shape[0], -1)
         print(f"Aligning {w_k} ({w_f.shape[1]} non-output positions {w_f.shape[1]**2} max pairs)...")
-        if cache:
-            s.append(_cached_alignment(w_f, w_g, loss_fn=loss_fn, max_search=max_search))
-        else:
-            s.append(_alignment(w_f, w_g, loss_fn=loss_fn, max_search=max_search))
+        s.append(_alignment(w_f, w_g, loss_fn=loss_fn, max_search=max_search,
+                            keep_loss=keep_loss, cache=cache))
     permutations = s[1:] + [(None, None, 0.)] # remove temporary, add identity to last layer
     s_f, s_g, loss = list(zip(*permutations))
     return s_f, s_g, loss

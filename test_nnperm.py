@@ -150,6 +150,8 @@ class TestPermuteNN(unittest.TestCase):
             self.validate_permutation_finder(lambda x, y: new.geometric_realignment(x, y, max_search=2, cache=False), model, perm)
             self.validate_permutation_finder(lambda x, y: new.geometric_realignment(x, y, max_search=-1, cache=True), model, perm)
             self.validate_permutation_finder(lambda x, y: new.geometric_realignment(x, y, max_search=2, cache=True), model, perm)
+            self.validate_permutation_finder(lambda x, y: new.geometric_realignment(x, y, max_search=2, cache=False, keep_loss="all"), model, perm)
+            self.validate_permutation_finder(lambda x, y: new.geometric_realignment(x, y, max_search=2, cache=False, keep_loss="single"), model, perm)
 
     def test_conv_permutation(self):
         for model, data in self.conv_models:
