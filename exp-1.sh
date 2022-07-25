@@ -32,6 +32,7 @@ LOSS=(L1 L2)
 parallel --delay=15 --linebuffer --jobs=3  \
     python exp_1.py  \
         --n_replicates=5  \
+        --max_search=100  \
         --ckpt={1}  \
         --loss={2}  \
     ::: ${CKPTS[@]}  \

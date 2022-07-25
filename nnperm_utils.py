@@ -12,7 +12,7 @@ sys.path.append("open_lth")
 from open_lth.models import registry
 from open_lth.foundations.hparams import ModelHparams
 
-from nnperm import canonical_normalization, geometric_realignment, permute_state_dict
+from nnperm import canonical_normalization, get_normalizing_permutation, permute_state_dict
 
 # error barrier
 def error_barrier_from_losses(errors, reduction='none'):
@@ -77,6 +77,21 @@ def get_open_lth_hparams(save_dir):
             raise ValueError(line)
     return hparams
 
+"""
+Special logic for ResNet
+* assumes skip connections are called "shortcut" and are empty if input and output shape equal
+* adds identity matrix to empty skip connections (identity matrix) to allow permutation of all skip layers
+"""
+def add_skip_weights_to_open_lth_resnet(model):
+    model = deepcopy(model)
+    for block in model.blocks:
+        if len(block.shortcut) == 0:
+            c = block.conv1.in_channels
+            block.shortcut = nn.Conv2d(c, c, 1, bias=False)
+            permutation_weights = torch.eye(c).reshape(c, c, 1, 1).to(device=block.conv1.weight.device)
+            block.shortcut.weight.data = nn.parameter.Parameter(permutation_weights)
+    return model
+
 def open_lth_model_and_data(hparams, n_examples, train=False, device="cuda",
         data_root=Path("../../open_lth_datasets/"),
     ):
@@ -103,6 +118,8 @@ def open_lth_model_and_data(hparams, n_examples, train=False, device="cuda",
         hparams["Model"]["model_name"],
         hparams["Model"]["model_init"],
         hparams["Model"]["batchnorm_init"])).to(device=device)
+    if "resnet" in hparams["Model"]["model_name"]:
+        add_skip_weights_to_open_lth_resnet()
     return model, dataloader
 
 def load_open_lth_state_dict(path, replicate, device="cuda"):
@@ -142,11 +159,11 @@ def align_and_error(model, state_dict_f, state_dict_g, dataloader, n_samples, lo
 
     normalized_f, scale_f = canonical_normalization(state_dict_f)
     normalized_g, scale_g = canonical_normalization(state_dict_g)
-    s_f, s_g, loss = geometric_realignment(state_dict_f, state_dict_g,
+    s_f, s_g, loss = get_normalizing_permutation(state_dict_f, state_dict_g,
         loss_fn=loss_fn, max_search=max_search, cache=True)
     permuted_f = permute_state_dict(state_dict_f, s_f)
     permuted_g = permute_state_dict(state_dict_g, s_g)
-    np_s_f, np_s_g, np_loss = geometric_realignment(normalized_f, normalized_g,
+    np_s_f, np_s_g, np_loss = get_normalizing_permutation(normalized_f, normalized_g,
         loss_fn=loss_fn, max_search=max_search, cache=True)
     norm_and_perm_f = permute_state_dict(normalized_f, np_s_f)
     norm_and_perm_g = permute_state_dict(normalized_g, np_s_g)

@@ -14,10 +14,16 @@ See `exp-plots.ipynb` for results.
 
 Assumptions made by `nnperm`:
 * BatchNorm precedes non-linearity
-* for ResNets, Conv layer has no bias, but is followed by BatchNorm with bias
 * if last Conv layer has X output channels, final linear layer takes X inputs
     - this means pooling/stride should reduce all image dims
 * network is not going to be trained further (BatchNorm running mean/var aren't used)
+* if using cache=True in get_normalizing_permutation, loss function is applied elementwise (e.g. this is true for MSE or MAE loss)
+
+ResNet assumptions:
+* Conv layer has no bias, but is followed by BatchNorm with bias
+* shortcut connections always have weights (if not transformed, set as identity matrix without bias)
+* the first shortcut points to the output of the first layer, subsequent shortcuts point to output of previous shortcut
+* shortcuts apply an optional linear transform, then are added to the output of the previous (block) layer
 
 ## Development
 
