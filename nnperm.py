@@ -24,6 +24,7 @@ Procedure:
 from copy import deepcopy
 from itertools import product
 from typing import Iterable
+from collections import deque
 from tqdm import tqdm
 import torch
 import numpy as np
@@ -42,13 +43,15 @@ def _is_shortcut(key, value) -> bool:
 def _is_identity(key, value, bias_key=None, bias_value=None) -> bool:
     with torch.no_grad():
         v = value.squeeze()
-        return len(v.shape) == 2 and v.shape[0] == v.shape[1] and \
-            torch.all(v == torch.eye(v.shape[0])) and bias_value is None
+        return len(v.shape) == 2 and v.shape[0] == v.shape[1] and bias_value is None and \
+            torch.all(v == torch.eye(v.shape[0], device=v.device))
 
 def _w_and_b(state_dict: dict, include_batchnorm=False) -> Iterable:
-    prev_w = []
+    prev_w = deque()
     for k, v in state_dict.items():
         if "weight" in k:
+            if len(prev_w) > 1:
+                yield prev_w.popleft(), (None, None)
             prev_w.append((k, v))
         if "bias" in k:
             assert len(prev_w) > 0
@@ -60,7 +63,7 @@ def _w_and_b(state_dict: dict, include_batchnorm=False) -> Iterable:
                         k, v = None, None  # only yield bias once
                     else:
                         yield (w_k, w), (None, None)
-            prev_w = []
+            prev_w.clear()
 
 def _generate_transform(gen_fn, state_dict, n_layers=-1, transform_shortcut="none") -> list:
     transform = []

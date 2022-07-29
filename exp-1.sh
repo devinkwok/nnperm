@@ -19,20 +19,19 @@ else
     source $SLURM_TMPDIR/env/bin/activate
 fi
 
-# VGG
-CKPTS=(train_7312e802e619673d23c7a02eba8aee52)
+# ResNet
+CKPTS=(train_71bc92a970b64a76d7ab7681764b0021)
 # MLP
 #    train_574e51abc295d8da78175b320504f2ba  \
 # S-Conv
 #    train_9d0811cc67a44e1ec85e702a5e01570f)
-# ResNet does not work yet
-    # train_71bc92a970b64a76d7ab7681764b0021  \
-LOSS=(L1 L2)
+# VGG
+#    train_7312e802e619673d23c7a02eba8aee52)
+LOSS=(L1)
 
 parallel --delay=15 --linebuffer --jobs=3  \
     python exp_1.py  \
         --n_replicates=5  \
-        --max_search=100  \
         --ckpt={1}  \
         --loss={2}  \
     ::: ${CKPTS[@]}  \

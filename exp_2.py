@@ -41,7 +41,7 @@ save_dir = Path(f"outputs/exp_2/{args.n_replicates}_{args.train_data}_{args.loss
 save_dir.mkdir(parents=True, exist_ok=True)
 for i in range(1, args.n_replicates + 1):
     # load checkpoint
-    state_dict_f = load_open_lth_state_dict(ckpt_dir, i, device=args.device)
+    state_dict_f = load_open_lth_state_dict(model, ckpt_dir, i, device=args.device)
     for j in range(args.noise_samples):
         # randomly permute
         state_dict_g, scale, permutation = random_transform(state_dict_f,

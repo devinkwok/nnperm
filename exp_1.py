@@ -35,8 +35,8 @@ save_dir.mkdir(parents=True, exist_ok=True)
 for i in range(1, args.n_replicates + 1):
     for j in range(1, i):
         print(f"Computing error barriers for {i}, {j}")
-        state_dict_f = load_open_lth_state_dict(ckpt_dir, i, device=args.device)
-        state_dict_g = load_open_lth_state_dict(ckpt_dir, j, device=args.device)
+        state_dict_f = load_open_lth_state_dict(model, ckpt_dir, i, device=args.device)
+        state_dict_g = load_open_lth_state_dict(model, ckpt_dir, j, device=args.device)
         values = align_and_error(model, state_dict_f, state_dict_g, dataloader,
                             args.barrier_resolution, args.loss, args.max_search)
         torch.save(values, save_dir / f"errors_{i}_{j}.pt")

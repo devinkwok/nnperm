@@ -12,7 +12,7 @@ sys.path.append("open_lth")
 from open_lth.models import registry
 from open_lth.foundations.hparams import ModelHparams
 
-from nnperm import canonical_normalization, get_normalizing_permutation, permute_state_dict
+from nnperm import _is_identity, _is_shortcut, canonical_normalization, get_normalizing_permutation, permute_state_dict
 
 # error barrier
 def error_barrier_from_losses(errors, reduction='none'):
@@ -119,13 +119,20 @@ def open_lth_model_and_data(hparams, n_examples, train=False, device="cuda",
         hparams["Model"]["model_init"],
         hparams["Model"]["batchnorm_init"])).to(device=device)
     if "resnet" in hparams["Model"]["model_name"]:
-        add_skip_weights_to_open_lth_resnet()
+        model = add_skip_weights_to_open_lth_resnet(model)
     return model, dataloader
 
-def load_open_lth_state_dict(path, replicate, device="cuda"):
+def load_open_lth_state_dict(model, path, replicate, device="cuda"):
     ckpt = torch.load(path / f"replicate_{replicate}/main/checkpoint.pth",
                     map_location=torch.device(device))
-    return deepcopy(ckpt["model_state_dict"])
+    model = deepcopy(model)
+    # use model to fill in missing shortcut weights
+    missing_keys, unexpected_keys = model.load_state_dict(ckpt["model_state_dict"], strict=False)
+    state_dict = model.state_dict()
+    assert len(unexpected_keys) == 0
+    for k in missing_keys:
+        assert _is_shortcut(k, state_dict[k]) and _is_identity(k, state_dict[k])
+    return deepcopy(state_dict)
 
 
 # experiments

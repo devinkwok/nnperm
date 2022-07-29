@@ -68,14 +68,14 @@ class TestPermuteNN(unittest.TestCase):
                 ),
                 self.make_dataloader(torch.randn([10, 3, 32, 32])),
             ),
-            # these models take a long time to run
+            # these models take longer to run
             (
                 cifar_vgg.Model.get_model_from_name("cifar_vgg_11", initializer=kaiming_normal),
                 self.make_dataloader(torch.randn([10, 3, 32, 32])),
             ),
             (
                 add_skip_weights_to_open_lth_resnet(cifar_resnet.Model.get_model_from_name(
-                      "cifar_resnet_8_4", initializer=kaiming_normal)),
+                      "cifar_resnet_14_4", initializer=kaiming_normal)),
                 self.make_dataloader(torch.randn([10, 3, 32, 32])),
             ),
         ]
