@@ -26,10 +26,12 @@ def error_barrier_from_losses(errors, reduction='none'):
         error_barriers = np.sum(error_barriers, axis=1)
     return error_barriers
 
-def evaluate_per_sample(model, dataloader, state_dict=None, loss_fn=None, device="cuda"):
+def evaluate_per_sample(model, dataloader, state_dict=None, loss_fn=None, device="cuda", in_place=False):
     if state_dict is not None:
-        model = deepcopy(model)
-        model.load_state_dict(deepcopy(state_dict))
+        if not in_place:
+            model = deepcopy(model)
+            state_dict = deepcopy(state_dict)
+        model.load_state_dict(state_dict)
     model.eval()
     outputs = []
     with torch.no_grad():
@@ -77,12 +79,12 @@ def get_open_lth_hparams(save_dir):
             raise ValueError(line)
     return hparams
 
-"""
-Special logic for ResNet
-* assumes skip connections are called "shortcut" and are empty if input and output shape equal
-* adds identity matrix to empty skip connections (identity matrix) to allow permutation of all skip layers
-"""
 def add_skip_weights_to_open_lth_resnet(model):
+    """
+    Special logic for ResNet
+    * assumes skip connections are called "shortcut" and are empty if input and output shape equal
+    * adds identity matrix to empty skip connections (identity matrix) to allow permutation of all skip layers
+    """
     model = deepcopy(model)
     for block in model.blocks:
         if len(block.shortcut) == 0:
@@ -92,9 +94,16 @@ def add_skip_weights_to_open_lth_resnet(model):
             block.shortcut.weight.data = nn.parameter.Parameter(permutation_weights)
     return model
 
-def open_lth_model_and_data(hparams, n_examples, train=False, device="cuda",
-        data_root=Path("../../open_lth_datasets/"),
-    ):
+def load_open_lth_model(hparams, device):
+    model = registry.get(ModelHparams(
+        hparams["Model"]["model_name"],
+        hparams["Model"]["model_init"],
+        hparams["Model"]["batchnorm_init"])).to(device=device)
+    if "resnet" in hparams["Model"]["model_name"]:
+        model = add_skip_weights_to_open_lth_resnet(model)
+    return model
+
+def load_open_lth_data(hparams, n_examples, train, device, data_root):
     if hparams["Dataset"]["dataset_name"] == "cifar10":
         transforms = torchvision.transforms.Compose([
             torchvision.transforms.ToTensor(),
@@ -113,13 +122,13 @@ def open_lth_model_and_data(hparams, n_examples, train=False, device="cuda",
     else:
         raise ValueError(f"Unsupported dataset {hparams['Dataset']['dataset_name']}")
     dataset = torch.utils.data.Subset(dataset, np.arange(n_examples))
-    dataloader = torch.utils.data.DataLoader(dataset, batch_size=n_examples, shuffle=False)
-    model = registry.get(ModelHparams(
-        hparams["Model"]["model_name"],
-        hparams["Model"]["model_init"],
-        hparams["Model"]["batchnorm_init"])).to(device=device)
-    if "resnet" in hparams["Model"]["model_name"]:
-        model = add_skip_weights_to_open_lth_resnet(model)
+    return torch.utils.data.DataLoader(dataset, batch_size=n_examples, shuffle=False)
+
+def open_lth_model_and_data(hparams, n_examples, train=False, device="cuda",
+        data_root=Path("../../open_lth_datasets/"),
+    ):
+    model = load_open_lth_model(hparams, device)
+    dataloader = load_open_lth_data(hparams, n_examples, train, device, data_root)
     return model, dataloader
 
 def load_open_lth_state_dict(model, path, replicate, device="cuda"):
