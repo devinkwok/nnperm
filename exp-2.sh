@@ -19,13 +19,15 @@ else
     source $SLURM_TMPDIR/env/bin/activate
 fi
 
-CKPTS=(  \
-    train_7312e802e619673d23c7a02eba8aee52  \
-    train_9d0811cc67a44e1ec85e702a5e01570f)
+# ResNet
 # MLP
-#    train_574e51abc295d8da78175b320504f2ba  \
-# ResNet does not work yet
-    # train_71bc92a970b64a76d7ab7681764b0021  \
+# S-Conv
+# VGG
+CKPTS=(train_71bc92a970b64a76d7ab7681764b0021  \
+   train_574e51abc295d8da78175b320504f2ba  \
+   train_9d0811cc67a44e1ec85e702a5e01570f  \
+   train_7312e802e619673d23c7a02eba8aee52)
+
 LOSS=(L1 L2)
 LAYERS=(-1 1)
 NOISE=(0 0.1 0.5)
@@ -49,9 +51,10 @@ parallel --delay=15 --linebuffer --jobs=3  \
         --ckpt={1}  \
         --loss=L2  \
         --n_layers=1  \
-        --weight_noise=0.1  \
+        --weight_noise={2}  \
         --no_scale  \
     ::: ${CKPTS[@]}  \
+    ::: ${NOISE[@]}  \
 
 parallel --delay=15 --linebuffer --jobs=3  \
     python exp_2.py  \
@@ -59,6 +62,19 @@ parallel --delay=15 --linebuffer --jobs=3  \
         --ckpt={1}  \
         --loss=L2  \
         --n_layers=1  \
-        --weight_noise=0.1  \
+        --weight_noise={2}  \
         --no_permute  \
     ::: ${CKPTS[@]}  \
+    ::: ${NOISE[@]}  \
+
+parallel --delay=15 --linebuffer --jobs=3  \
+    python exp_2.py  \
+        --n_replicates=5  \
+        --ckpt={1}  \
+        --loss=L2  \
+        --n_layers=1  \
+        --weight_noise={2}  \
+        --no_scale  \
+        --no_permute  \
+    ::: ${CKPTS[@]}  \
+    ::: ${NOISE[@]}  \

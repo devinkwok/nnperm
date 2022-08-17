@@ -20,14 +20,15 @@ else
 fi
 
 # ResNet
-CKPTS=(train_71bc92a970b64a76d7ab7681764b0021)
 # MLP
-#    train_574e51abc295d8da78175b320504f2ba  \
 # S-Conv
-#    train_9d0811cc67a44e1ec85e702a5e01570f)
 # VGG
-#    train_7312e802e619673d23c7a02eba8aee52)
-LOSS=(L1)
+CKPTS=(train_71bc92a970b64a76d7ab7681764b0021  \
+   train_574e51abc295d8da78175b320504f2ba  \
+   train_9d0811cc67a44e1ec85e702a5e01570f  \
+   train_7312e802e619673d23c7a02eba8aee52)
+
+LOSS=(L1 L2)
 
 parallel --delay=15 --linebuffer --jobs=3  \
     python exp_1.py  \

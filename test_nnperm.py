@@ -79,6 +79,19 @@ class TestPermuteNN(unittest.TestCase):
                 self.make_dataloader(torch.randn([10, 3, 32, 32])),
             ),
         ]
+        for model, data in self.conv_models:
+            self.conv_models.append((self.make_first_weights_small(model), data))
+
+    def make_first_weights_small(self, model):
+        model = deepcopy(model)
+        # test when input weights are close to 0
+        state_dict = model.state_dict()
+        for k, v in state_dict.items():
+            if "weight" in k:
+                state_dict[k] = v * 1e-8
+                break
+        model.load_state_dict(state_dict)
+        return model
 
     class StateUnchangedContextManager():
         def __init__(self, state) -> None:
@@ -125,6 +138,8 @@ class TestPermuteNN(unittest.TestCase):
             self.validate_symmetry(new.normalize_batchnorm, model, data)
             self.validate_symmetry(lambda x: new.canonical_normalization(x)[0], model, data)
             self.validate_scaling(model, scale)
+            scales = new.get_normalizing_scale(model.state_dict())
+            print('\nScale magnitude\n', [(torch.min(s).item(), torch.mean(s).item(), torch.max(s).item()) if s is not None else None for s in scales])
 
     def test_conv_normalization(self):
         # test scaling for convnet
@@ -151,26 +166,26 @@ class TestPermuteNN(unittest.TestCase):
             else:
                 print("Found permutation", x.shape, "for layer", k)
                 self.assertLess(torch.min(d), 1e-1)
+        # check that permutations are valid
+        for a, b in zip(s_1, s_2):
+            if a is not None:
+                np.testing.assert_array_equal(np.arange(len(a)), np.sort(a))
+                np.testing.assert_array_equal(np.arange(len(b)), np.sort(b))
 
     def test_mlp_permutation(self):
         for model, data, _, perm in self.mlp_models:
             self.validate_symmetry(lambda x: old.permutate_state_dict_mlp(x, perm), model, data)
             self.validate_symmetry(lambda x: new.permute_state_dict(x, perm), model, data)
             self.validate_permutation_finder(old.find_permutations, model, perm)
-            self.validate_permutation_finder(lambda x, y: new.get_normalizing_permutation(x, y, max_search=-1, cache=False), model, perm)
-            self.validate_permutation_finder(lambda x, y: new.get_normalizing_permutation(x, y, max_search=2, cache=False), model, perm)
-            self.validate_permutation_finder(lambda x, y: new.get_normalizing_permutation(x, y, max_search=-1, cache=True), model, perm)
-            self.validate_permutation_finder(lambda x, y: new.get_normalizing_permutation(x, y, max_search=2, cache=True), model, perm)
-            self.validate_permutation_finder(lambda x, y: new.get_normalizing_permutation(x, y, max_search=2, cache=False, keep_loss="all"), model, perm)
-            self.validate_permutation_finder(lambda x, y: new.get_normalizing_permutation(x, y, max_search=2, cache=False, keep_loss="single"), model, perm)
+            self.validate_permutation_finder(lambda x, y: new.get_normalizing_permutation(x, y), model, perm)
 
     def test_conv_permutation(self):
         for model, data in self.conv_models:
             perm = new.random_permutation(model.state_dict())
             self.validate_symmetry(lambda x: new.permute_state_dict(x, perm), model, data)
-            self.validate_permutation_finder(lambda x, y: new.get_normalizing_permutation(x, y, max_search=2, cache=True), model, perm)
-            # self.validate_permutation_finder(lambda x, y: new.get_normalizing_permutation(x, y, max_search=2, cache=True, align_shortcut="shortcut"), model, perm)
-            # self.validate_permutation_finder(lambda x, y: new.get_normalizing_permutation(x, y, max_search=2, cache=True, align_shortcut="block"), model, perm)
+            self.validate_permutation_finder(lambda x, y: new.get_normalizing_permutation(x, y,), model, perm)
+            # self.validate_permutation_finder(lambda x, y: new.get_normalizing_permutation(x, y,, align_shortcut="shortcut"), model, perm)
+            # self.validate_permutation_finder(lambda x, y: new.get_normalizing_permutation(x, y,, align_shortcut="block"), model, perm)
 
     def test_random_transform(self):
         for model, data, scale, perm in self.mlp_models:
@@ -220,6 +235,35 @@ class TestPermuteNN(unittest.TestCase):
             diff = np.abs(output - normalized_output)
             print("Testing add_skip_weights_to_open_lth_resnet: max abs diff", np.max(diff), "mean abs diff", np.mean(diff))
             np.testing.assert_allclose(output, normalized_output, atol=1e-5)
+
+    def test_sinkhorn(self):
+        for i, (model, _) in enumerate(self.conv_models):
+            model_1 = deepcopy(model.state_dict())
+            self.setUp()
+            model_2 = self.conv_models[i][0].state_dict()
+            new.get_normalizing_permutation(model_1, model_2)
+
+    def test_are_resnet_blocks_interchangeable_if_zero(self):
+        model = cifar_resnet.Model.get_model_from_name(
+                      "cifar_resnet_14_4", initializer=kaiming_normal)
+        data = self.make_dataloader(torch.randn([10, 3, 32, 32]))
+        # zero out block 0 weights
+        state_dict = model.state_dict()
+        state_dict["blocks.0.conv1.weight"].data.zero_()
+        model.load_state_dict(state_dict)
+        # swap blocks 0 and 1
+        def swap_blocks(state_dict, i=0, j=1):
+            new_state_dict = {}
+            for k, v in state_dict.items():
+                new_key = k
+                if k.startswith(f"blocks.{i}"):
+                    new_key = f"blocks.{j}" + k[len(f"blocks.{i}"):]
+                elif k.startswith(f"blocks.{j}"):
+                    new_key = f"blocks.{i}" + k[len(f"blocks.{j}"):]
+                new_state_dict[new_key] = v
+            return new_state_dict
+        self.validate_symmetry(swap_blocks, model, data)
+
 
 if __name__ == "__main__":
     unittest.main()

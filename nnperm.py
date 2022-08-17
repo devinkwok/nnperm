@@ -23,12 +23,13 @@ Procedure:
 
 from copy import deepcopy
 from itertools import product
-from typing import Iterable
+from typing import Iterable, Tuple
 from collections import deque
 from tqdm import tqdm
 import torch
 import numpy as np
 from torch import nn
+from sinkhorn import find_permutation
 
 
 """
@@ -354,8 +355,8 @@ def permute_state_dict(state_dict: dict, permutation: list, in_place=False) -> d
     """
     return _transform_state_dict(_permute_layer, state_dict, permutation, in_place=in_place)
 
-def _geometric_realignment(layers_f, layers_g, s_prev=None, do_align=True,
-        loss_fn=nn.MSELoss(), max_search=-1, keep_loss="summary", cache=True
+def _optimal_transport_realignment(layers_f, layers_g, s_prev=None, do_align=True,
+        loss_fn=nn.MSELoss(),
     ):
     (w_k, w_f), _ = layers_f
     (_, w_g), _ = layers_g
@@ -366,46 +367,12 @@ def _geometric_realignment(layers_f, layers_g, s_prev=None, do_align=True,
         return None, None, loss_fn(w_f, w_g)
     w_f = w_f.reshape(w_f.shape[0], -1)
     w_g = w_g.reshape(w_g.shape[0], -1)
-    print(f"Aligning {w_k} ({w_f.shape[1]} non-output positions {w_f.shape[1]**2} max pairs)...")
-    if not (keep_loss == "all" or keep_loss == "summary" or keep_loss == "single"):
-        raise ValueError(f"Invalid keep_loss {keep_loss}")
-    with torch.no_grad():
-        truncated_f = w_f[:, 0:min(max_search, w_f.shape[1])]
-        argsort_f = torch.argsort(truncated_f, axis=0).T
-        argsort_g = torch.argsort(w_g, axis=0).T  # transpose to iterate over non-output dims
-        if cache:  # cache losses so they don't have to be generated every iteration
-            losses_per_pair = torch.empty(len(w_f), len(w_g))
-            for i, j in tqdm(product(range(len(w_f)), range(len(w_g))
-                            ), total=len(w_f)*len(w_g)):
-                losses_per_pair[i, j] = loss_fn(w_f[i], w_g[j])
-        # go through all pairs of positions, saving permutation with lowest loss
-        best_f, best_g, best_loss = None, None, float('inf')
-        loss_stats = []
-        for i in tqdm(range(len(argsort_f))):
-            if not cache:  # (not cached) generate each f permutation once only
-                permuted_f = _permute_layer(w_f, argsort_f[i])
-            if keep_loss != "single":
-                losses = torch.empty(len(argsort_g))
-            for j in range(len(argsort_g)):
-                if cache:  # (cached) look up pairwise losses using permutations
-                    loss = torch.mean(losses_per_pair[argsort_f[i], argsort_g[j]])
-                else:  # (not cached) permute g and calculate loss
-                    permuted_g = _permute_layer(w_g, argsort_g[j])
-                    loss = loss_fn(permuted_f, permuted_g)
-                if loss < best_loss:
-                    best_f, best_g, best_loss = argsort_f[i], argsort_g[j], loss
-                if keep_loss != "single":
-                    losses[j] = loss
-            if keep_loss == "all":
-                loss_stats.append(losses)
-            elif keep_loss == "summary":
-                loss_stats.append(torch.tensor([torch.min(losses), *torch.std_mean(losses), torch.max(losses)]))
-        if keep_loss == "single":
-            loss_stats = [best_loss]
-    return best_f, best_g, torch.stack(loss_stats)
+    print(f"Aligning {w_k} ({w_f.shape[1]} non-output positions)...")
+    permutation_f, permutation_g, best_loss = find_permutation(w_f.detach().cpu().numpy(), w_g.detach().cpu().numpy(), vector_loss_fn=loss_fn)
+    return torch.tensor(permutation_f), torch.tensor(permutation_g), torch.tensor([best_loss])
 
 def get_normalizing_permutation(normalized_state_dict_f: dict, normalized_state_dict_g: dict,
-        loss_fn=nn.MSELoss(), max_search=-1, cache=True, align_shortcut="none", keep_loss="summary",
+        loss_fn=nn.MSELoss(), align_shortcut="none",
     ) -> list:
     """Finds permutation of weights that minimizes difference between two neural nets.
     Uses Tom's algorithm (see writeup).
@@ -440,8 +407,8 @@ def get_normalizing_permutation(normalized_state_dict_f: dict, normalized_state_
             and loss is all compared differences between the weights of the two models.
     """
     def _wrapper(layer_f, layer_g, s_prev=None, do_align=True):
-        return _geometric_realignment(layer_f, layer_g, s_prev=s_prev, do_align=do_align,
-            loss_fn=loss_fn, max_search=max_search, keep_loss=keep_loss, cache=cache)
+        return _optimal_transport_realignment(layer_f, layer_g, s_prev=s_prev,
+            do_align=do_align, loss_fn=loss_fn)
 
     permutations = _align_state_dict(_wrapper, normalized_state_dict_f,
             normalized_state_dict_g, align_shortcut=align_shortcut)
@@ -485,10 +452,10 @@ def random_permutation(state_dict: dict, n_layers=-1, permute_shortcut="none") -
 
 def random_transform(state_dict: dict, scale=True, permute=True, n_layers=-1,
         scale_distribution=torch_chisq, transform_shortcut="none",
-    ) -> dict:
+    ) -> Tuple[dict, list, list]:
     if permute:
         permutation = random_permutation(state_dict, n_layers=n_layers,
-                                    transform_shortcut=transform_shortcut)
+                                    permute_shortcut=transform_shortcut)
         state_dict = permute_state_dict(state_dict, permutation)
     if scale:
         scale = random_scale(state_dict, n_layers=n_layers,

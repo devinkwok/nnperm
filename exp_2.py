@@ -24,7 +24,6 @@ parser.add_argument('--noise_samples', default=1, type=int)
 parser.add_argument('--train_data', default=False, action="store_true")
 parser.add_argument('--barrier_resolution', default=11, type=int)
 parser.add_argument('--n_examples', default=10000, type=int)
-parser.add_argument('--max_search', default=-1, type=int)
 parser.add_argument('--ckpt_root', default="../../open_lth_data/", type=Path)
 parser.add_argument('--device', default="cuda", type=str)
 args = parser.parse_args()
@@ -37,7 +36,7 @@ model, dataloader = open_lth_model_and_data(hparams, args.n_examples,
                             train=args.train_data, device=args.device)
 
 # experiment
-save_dir = Path(f"outputs/exp_2/{args.n_replicates}_{args.train_data}_{args.loss}_{args.n_layers}_{args.no_scale}_{args.no_permute}_{args.weight_noise}_{args.ckpt}")
+save_dir = Path(f"outputs/exp_OT_2/{args.n_replicates}_{args.train_data}_{args.loss}_{args.n_layers}_{args.no_scale}_{args.no_permute}_{args.weight_noise}_{args.ckpt}")
 save_dir.mkdir(parents=True, exist_ok=True)
 for i in range(1, args.n_replicates + 1):
     # load checkpoint
@@ -52,5 +51,5 @@ for i in range(1, args.n_replicates + 1):
                                 args.weight_noise, args.n_layers)
         # error barriers with and without realignment
         values = align_and_error(model, state_dict_f, state_dict_g, dataloader,
-                            args.barrier_resolution, args.loss, args.max_search)
+                            args.barrier_resolution, args.loss)
         torch.save(values, save_dir / f"errors_{i}_{j}.pt")
