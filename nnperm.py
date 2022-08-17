@@ -20,10 +20,12 @@ Procedure:
 * apply permutation finding algorithm (note, only evaluates weight similarity, not bias)
 * permute to canonical form
 """
-
+from __future__ import annotations
 from copy import deepcopy
+from dataclasses import dataclass
 from itertools import product
-from typing import Iterable
+import json
+from typing import Callable, Dict, Iterable, List, Optional, Set, Tuple
 from collections import deque
 from tqdm import tqdm
 import torch
@@ -31,20 +33,128 @@ import numpy as np
 from torch import nn
 
 
+@dataclass
+class Param:
+    state_dict: Dict[str, torch.Tensor]
+    size: torch.Size
+    name: str
+    dim_in: Optional[int] = None
+    dim_out: Optional[int] = None
+
+    def is_scalable(self):
+        return self.name not in self.state_dict
+
+    def is_permutable(self):
+        return self.dim_out is not None
+
+    @property
+    def value(self):
+        return self.state_dict[self.name]
+
+    def is_batchnorm(self) -> bool:
+        return "weight" in self.name and self.value.dim() == 1
+
+    def is_weight_param(self) -> bool:
+        return "weight" in self.name and len(self.size) > 1
+
+    def is_identity(self) -> bool:
+        with torch.no_grad():
+            v = self.value.squeeze()
+            return len(v.shape) == 2 and v.shape[0] == v.shape[1] and \
+                torch.all(v == torch.eye(v.shape[0], device=v.device)).item()
+
+
+class Node:
+    def __init__(self, param: Param, parents: Set[Node] = None, children: Set[Node] = None) -> None:
+        self.param = param
+        self.parents = set() if parents is None else parents
+        self.children = set() if children is None else children
+        for parent in self.parents:
+            parent.children.add(self)
+        for child in self.children:
+            child.parents.add(self)
+
+    @property
+    def name(self):
+        return self.param.name
+
+    def __repr__(self) -> str:
+        return self.name + '\t[' + ','.join([p.name for p in self.parents]) + ']\t[' + ','.join([c.name for c in self.children]) + ']'
+
+
+class ComputationGraph:
+
+    def __init__(self, nodes: Dict[str, Node]) -> None:
+        self.nodes = nodes
+        self.input = None
+        self.output = None
+        for v in nodes.values():
+            if len(v.parents) == 0:
+                assert self.input is None
+                self.input = v
+            if len(v.children) == 0:
+                assert self.output is None, nodes
+                self.output = v
+
+    @staticmethod
+    def from_dict(state_dict, graph_dict):
+        nodes = {}
+        for key, v in graph_dict.items():
+            assert key not in nodes
+            parents = {nodes[k] for k in v.get('parents', [])}
+            if key in state_dict:
+                size = state_dict[key].shape
+                dim_out = 0
+                if len(size) > 1:
+                    dim_in = 1
+                else:
+                    dim_in = 0
+            else:  # special layers (input, output)
+                size = v.get('shape', None)
+                dim_out = None
+                dim_in = None
+            param = Param(state_dict, size, key, dim_in=dim_in, dim_out=dim_out)
+            nodes[key] = Node(param, parents=parents)
+        return ComputationGraph(nodes)
+
+    @staticmethod
+    def from_file(state_dict, file):
+        with open(file, 'r') as f:
+            graph_dict = json.load(f)
+        return ComputationGraph.from_dict(state_dict, graph_dict)
+
+    def to_dict(self):
+        graph_dict = {}
+        def append_to_graph(node):
+            graph_dict[node.name] = [child.name for child in node.children]
+        self.recursive_apply(append_to_graph, self.input)
+        return graph_dict
+
+    def to_file(self, file):
+        with open(file, 'w') as f:
+            json.dump(self.to_dict(), f)
+
+    def recursive_apply(self, apply_fn: Callable, curr_node: Node):
+        apply_fn(curr_node)
+        for child in curr_node.children:
+            self.recursive_apply(apply_fn, child)
+
+    def __repr__(self):
+        strings = []
+        for node in self.nodes.items():
+            strings.append(str(node))
+        return '\n\t'.join(f'{i} {x}' for i, x in enumerate(strings))
+
+
+# a group of weights that share a transform
+@dataclass
+class PermutationSet:
+    params: List[Tuple[bool, int, Param]]  # use in loss, dim, param
+
+
 """
 Helper functions
 """
-def _is_weight_param(key, value) -> bool:
-    return "weight" in key and value.dim() > 1
-
-def _is_shortcut(key, value) -> bool:
-    return "shortcut" in key
-
-def _is_identity(key, value, bias_key=None, bias_value=None) -> bool:
-    with torch.no_grad():
-        v = value.squeeze()
-        return len(v.shape) == 2 and v.shape[0] == v.shape[1] and bias_value is None and \
-            torch.all(v == torch.eye(v.shape[0], device=v.device))
 
 def _w_and_b(state_dict: dict, include_batchnorm=False) -> Iterable:
     prev_w = deque()
@@ -70,7 +180,7 @@ def _generate_transform(gen_fn, state_dict, n_layers=-1, transform_shortcut="non
     shortcut_idx = 0
     for k, v in state_dict.items():
         if _is_weight_param(k, v):
-            if _is_shortcut(k, v):
+            if _is_skip(k, v):
                 # 1. do not transform previous block layer or shorcut
                 if transform_shortcut == "none":
                     if _is_identity(k, v):  # if shortcut is identity, pass through shortcut transform
@@ -120,7 +230,7 @@ def _transform_state_dict(apply_fn, state_dict, transform, in_place=False):
             (w_k, w), (b_k, b) = layers[i]
             s = transform[i]
             if i < len(layers) - 1:
-                if s is None and _is_shortcut(*layers[i + 1][0]) and \
+                if s is None and _is_skip(*layers[i + 1][0]) and \
                         _is_identity(*layers[i + 1][0], *layers[i + 1][1]):
                     s = shortcut_prev
             # 1. shortcut is identity, apply shortcut_prev to input of next layer
@@ -128,7 +238,7 @@ def _transform_state_dict(apply_fn, state_dict, transform, in_place=False):
                 s_prev = shortcut_prev
             else:
                 # 2. shortcut has weights, apply shortcut_prev to input of shortcut, s to input of next layer
-                if _is_shortcut(w_k, w):
+                if _is_skip(w_k, w):
                     s_prev = shortcut_prev  # apply previous shortcut transform to input
                     shortcut_prev = s  # save current transform for next shortcut layer
                 if s_prev is not None:  # undo previous layer transform
@@ -155,11 +265,11 @@ def _align_state_dict(align_fn, *state_dicts, align_shortcut="none"):
     with torch.no_grad():
         for i in range(len(layers) - 1):
             # 1. current layer is shortcut, copy previous permutation
-            if _is_shortcut(*first_model[i][0]):
+            if _is_skip(*first_model[i][0]):
                 s.append(s[-1])
                 if not _is_identity(*first_model[i][0], *first_model[i][1]):
                     shortcut_idx = i  # if shortcut has weights, move shortcut transform to here
-            elif i < len(layers) - 1 and _is_shortcut(*first_model[i + 1][0]):
+            elif i < len(layers) - 1 and _is_skip(*first_model[i + 1][0]):
                 # 2. next layer is shortcut, do not permute weights
                 if align_shortcut == "none":
                     s.append(align_fn(*layers[i], s_prev=s[-1], do_align=False))
@@ -175,7 +285,7 @@ def _align_state_dict(align_fn, *state_dicts, align_shortcut="none"):
                 else:
                     raise ValueError(f"align_shortcut must be one of 'none', 'shortcut', or 'block': {align_shortcut}")
             else:  # if previous layer is shortcut, need to apply shortcut transform
-                if i > 0 and _is_shortcut(*first_model[i - 1][0]):
+                if i > 0 and _is_skip(*first_model[i - 1][0]):
                     s.append(align_fn(*layers[i], s_prev=s[shortcut_idx]))
                 else:
                     s.append(align_fn(*layers[i], s_prev=s[-1]))
@@ -246,7 +356,7 @@ def scale_state_dict(state_dict: dict, scale: list, in_place=False) -> dict:
         w * _broadcast(s, w, 0) if out else w / _broadcast(s, w, 1),
         state_dict, scale, in_place=in_place)
 
-def normalize_batchnorm(state_dict: dict, in_place=False) -> dict:
+def normalize_batchnorm(graph: ComputationGraph, in_place=False) -> dict:
     """Combines batchnorm with previous linear or convolution layer.
     Assumes there is no non-linearity between the previous layer and batchnorm.
     Sets batchnorm weights to 1 and biases to 0.
@@ -258,6 +368,13 @@ def normalize_batchnorm(state_dict: dict, in_place=False) -> dict:
     Returns:
         dict: pytorch weights, with batchnorm set to (1, 0)
     """
+    nodes = [graph.output]
+    while len(nodes) > 0:
+        curr_node = nodes.pop()
+        if curr_node.param.is_batchnorm():
+            batchnorm = curr_node
+            assert len(curr_node.parents) == 1
+            curr_node.parents[0]
     if not in_place:
         new_state_dict = deepcopy(state_dict)
     layers = list(_w_and_b(state_dict, include_batchnorm=True))

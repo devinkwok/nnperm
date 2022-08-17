@@ -12,7 +12,138 @@ sys.path.append("open_lth")
 from open_lth.models import registry
 from open_lth.foundations.hparams import ModelHparams
 
-from nnperm import _is_identity, _is_shortcut, canonical_normalization, get_normalizing_permutation, permute_state_dict
+from nnperm import ComputationGraph, _is_identity, _is_shortcut, canonical_normalization, get_normalizing_permutation, permute_state_dict
+
+
+# class SaveIntermediateHook:
+#     """This is used to get intermediate values in forward() pass.
+#     """
+
+#     def __init__(self, named_modules, target_device='cpu'):
+#         self.module_names = collections.OrderedDict()
+#         for name, module in named_modules:
+#             self.module_names[module] = name
+#             module.register_forward_hook(self)
+#         self.device = target_device
+#         self.reset()
+
+#     def reset(self):
+#         self.values = []
+
+#     def __call__(self, module, args, return_val):
+#         layer_name = self.module_names[module]
+#         args = [x.detach().clone().to(device=self.device) for x in args]
+#         return_val = return_val.detach().clone().to(device=self.device)
+#         self.values.append((layer_name, *args, return_val))
+
+#     def get_module_names(self):
+#         return [x for x in self.module_names.values()]
+
+#     def get_saved_names(self):
+#         return [x[0] for x in self.values]
+
+#     def get_inputs(self):
+#         return [x[1:-1] for x in self.values]
+
+#     def get_outputs(self):
+#         return [x[-1] for x in self.values]
+
+#     def is_identity(self, x, y):
+#         return len(x.flatten()) == len(y.flatten()) and torch.all(x.flatten() == y.flatten())
+
+#     def is_relu_output(self, x):
+#         return torch.all(x >= 0.).item()
+
+#     def get_intermediates(self):
+#         intermediates = OrderedDict()
+#         for v in self.values:
+#             for i, x in enumerate(v[1:]):
+#                 is_return_value = (i == len(v) - 2)
+#                 key = v[0] + (".out" if is_return_value else ".in")
+#                 is_unique = True
+#                 for n, y in intermediates.items():
+#                     if self.is_identity(x, y):
+#                         print(f"{key} and {n} are equal, omitting {key}")
+#                         is_unique = False
+#                         break
+#                 if is_unique:
+#                     assert key not in intermediates
+#                     intermediates[key] = x
+#         return intermediates
+
+#     def get_graph(self, input_tensor):
+#         outputs = {'input': input_tensor}
+#         for v in self.values:
+#             assert v[0] not in outputs
+#             outputs[v[0]] = v[-1]
+#         graph_nodes = {}
+#         for v in self.values:
+#             name = v[0]
+#             inputs = []
+#             for x in v[1:-1]:
+#                 for n, y in outputs.items():
+#                     if self.is_identity(x, y):
+#                         inputs.append(n)
+#             assert len(inputs) == len(v[1:-1])
+#             assert name not in graph_nodes
+#             graph_nodes[name] = inputs
+#         return graph_nodes
+
+
+# def computation_graph(model, n_test_points=10):
+#     hook = SaveIntermediateHook(model.named_modules())
+#     first_layer = next(iter(model.state_dict().values()))
+#     shape = [n_test_points] + list(first_layer.shape[1:])
+#     test_data = torch.randn(shape)
+#     model(test_data)
+#     print(hook.get_graph(test_data))
+#     #TODO need to handle case where parent module has the same input/output as a set of child layers, we don't want that
+
+
+def infer_open_lth_computation_graph(input_size,
+        state_dict,
+        input_name='input',
+        skip_names=['skip', 'shortcut'],
+        first_skip_idx=2,
+        ignore_names=['running_mean', 'running_var', 'num_batches_tracked'],
+):
+    """Uses names from state_dict to assume how the computation graph is structured.
+
+    Assumes:
+    * the first shortcut points to the output of the first layer
+    * subsequent shortcuts point to output of previous shortcut
+    * shortcuts apply an optional linear transform, then are added to the output of the previous (block) layer
+
+    Args:
+        state_dict (dict): from torch.nn.Module.state_dict()
+    """
+    on_skip_path = False
+    skip_key = input_name
+    prev_key = input_name
+    graph_dict = {input_name: {'shape': input_size}}
+    for i, (k, v) in enumerate(state_dict.items()):
+        if i == first_skip_idx:
+            skip_key = k
+        if any(n in k for n in ignore_names):
+            continue  # do not include in graph
+        elif any(n in k for n in skip_names):
+            # assume skip layer connects to previous skip (or input)
+            if on_skip_path:
+                graph_dict[k] = {'parents': [skip_key]}
+            else:
+                graph_dict[k] = {'parents': [prev_key, skip_key]}
+                on_skip_path = True
+            skip_key = k
+        else:  # assume layer is sequentially applied
+            if on_skip_path:
+                graph_dict[k] = {'parents': [prev_key, skip_key]}
+                on_skip_path = False
+            else:
+                graph_dict[k] = {'parents': [prev_key]}
+            prev_key = k
+    graph_dict['output'] = {'parents': [prev_key]}
+    return ComputationGraph.from_dict(state_dict, graph_dict)
+
 
 # error barrier
 def error_barrier_from_losses(errors, reduction='none'):
