@@ -69,16 +69,35 @@ class TestPermuteNN(unittest.TestCase):
                 self.make_dataloader(torch.randn([10, 3, 32, 32])),
             ),
             # these models take longer to run
-            (
-                cifar_vgg.Model.get_model_from_name("cifar_vgg_11", initializer=kaiming_normal),
-                self.make_dataloader(torch.randn([10, 3, 32, 32])),
-            ),
-            (
-                add_skip_weights_to_open_lth_resnet(cifar_resnet.Model.get_model_from_name(
-                      "cifar_resnet_14_4", initializer=kaiming_normal)),
-                self.make_dataloader(torch.randn([10, 3, 32, 32])),
-            ),
+            # (
+            #     add_skip_weights_to_open_lth_resnet(cifar_resnet.Model.get_model_from_name(
+            #           "cifar_resnet_14_4", initializer=kaiming_normal)),
+            #     self.make_dataloader(torch.randn([10, 3, 32, 32])),
+            # ),
+            # (
+            #     nn.Sequential(
+            #         cifar_vgg.Model.ConvModule(3, 200),
+            #         cifar_vgg.Model.ConvModule(200, 200),
+            #         cifar_vgg.Model.ConvModule(200, 200),
+            #         cifar_vgg.Model.ConvModule(200, 200),
+            #     ),
+            #     self.make_dataloader(torch.randn([10, 3, 32, 32])),
+            # ),
+            # (
+            #     cifar_vgg.Model.get_model_from_name("cifar_vgg_11", initializer=kaiming_normal),
+            #     self.make_dataloader(torch.randn([10, 3, 32, 32])),
+            # ),
         ]
+        for model, data in self.conv_models:
+            self.randomize_batchnorm_weights(model)
+
+    def randomize_batchnorm_weights(self, model):
+        state_dict = model.state_dict()
+        for k, v in state_dict.items():
+            if "bn" in k:
+                if "num_batches_tracked" not in k:
+                    assert len(v.shape) == 1, (k, v.shape)
+                    v.random_()
 
     class StateUnchangedContextManager():
         def __init__(self, state) -> None:
