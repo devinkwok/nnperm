@@ -68,30 +68,51 @@ class TestPermuteNN(unittest.TestCase):
                 ),
                 self.make_dataloader(torch.randn([10, 3, 32, 32])),
             ),
-            # these models take longer to run
             (
-                cifar_vgg.Model.get_model_from_name("cifar_vgg_11", initializer=kaiming_normal),
+                nn.Sequential(
+                    cifar_vgg.Model.ConvModule(3, 64),
+                    cifar_vgg.Model.ConvModule(64, 128),
+                ),
                 self.make_dataloader(torch.randn([10, 3, 32, 32])),
             ),
+            # following models take longer to run
             (
                 add_skip_weights_to_open_lth_resnet(cifar_resnet.Model.get_model_from_name(
                       "cifar_resnet_14_4", initializer=kaiming_normal)),
                 self.make_dataloader(torch.randn([10, 3, 32, 32])),
             ),
+            (
+                cifar_vgg.Model.get_model_from_name("cifar_vgg_11", initializer=kaiming_normal),
+                self.make_dataloader(torch.randn([10, 3, 32, 32])),
+            ),
         ]
         for model, data in self.conv_models:
-            self.conv_models.append((self.make_first_weights_small(model), data))
+            self.randomize_batchnorm_weights(model)
+            self.insert_small_weights(model, 0.05)
 
-    def make_first_weights_small(self, model):
-        model = deepcopy(model)
-        # test when input weights are close to 0
+    def randomize_batchnorm_weights(self, model):
+        state_dict = model.state_dict()
+        with torch.no_grad():
+            for k, v in state_dict.items():
+                if new._is_batchnorm(k, v):
+                    key = k[:-len(".weight")]
+                    tensors = [(k, v),
+                        ("bias", state_dict[key + ".bias"]),
+                        ("running_mean", state_dict[key + ".running_mean"]),
+                        ("running_var", state_dict[key + ".running_var"]),
+                    ]
+                    for _, t in tensors:
+                        assert len(v.shape) == 1 and v.shape == t.shape, (k, v.shape, t.shape)
+                        t.add_(torch.rand_like(t) - 0.5)
+
+    def insert_small_weights(self, model, probability, scale_factor=1e-2):
         state_dict = model.state_dict()
         for k, v in state_dict.items():
             if "weight" in k:
-                state_dict[k] = v * 1e-8
-                break
-        model.load_state_dict(state_dict)
-        return model
+                mask = torch.rand_like(v) < probability
+                scale = torch.ones_like(v)
+                scale[mask] = scale_factor
+                state_dict[k] *= scale
 
     class StateUnchangedContextManager():
         def __init__(self, state) -> None:
@@ -115,7 +136,7 @@ class TestPermuteNN(unittest.TestCase):
             normalized_output = evaluate_per_sample(model, data, state_dict=normalized, device="cpu")
             diff = np.abs(output - normalized_output)
             print("Testing", transform_fn.__name__, ": max abs diff", np.max(diff), "mean abs diff", np.mean(diff))
-            np.testing.assert_allclose(output, normalized_output, atol=1e-5)
+            np.testing.assert_allclose(output, normalized_output, rtol=1e-4, atol=1e-4)
 
     def validate_scaling(self, model, scale):
         state_dict = deepcopy(model.state_dict())
@@ -127,7 +148,7 @@ class TestPermuteNN(unittest.TestCase):
                     self.assertIsNone(s_1)
                     self.assertIsNone(s_2)
                 else:
-                    np.testing.assert_allclose(np.array(s_1), np.array(s_2), rtol=1e-5, atol=1e-3)
+                    np.testing.assert_allclose(np.array(s_1), np.array(s_2), rtol=1e-4, atol=1e-4)
             print("Testing scales, scales match")
 
     def test_mlp_normalization(self):
