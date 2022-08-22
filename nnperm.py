@@ -37,6 +37,9 @@ Helper functions
 def _is_weight_param(key, value) -> bool:
     return "weight" in key and value.dim() > 1
 
+def _is_batchnorm(key, value) -> bool:
+    return "weight" in key and value.dim() == 1
+
 def _is_shortcut(key, value) -> bool:
     return "shortcut" in key
 
@@ -71,7 +74,7 @@ def _generate_transform(gen_fn, state_dict, n_layers=-1, transform_shortcut="non
     for k, v in state_dict.items():
         if _is_weight_param(k, v):
             if _is_shortcut(k, v):
-                # 1. do not transform previous block layer or shorcut
+                # 1. do not transform previous block layer or shortcut
                 if transform_shortcut == "none":
                     if _is_identity(k, v):  # if shortcut is identity, pass through shortcut transform
                         # transform[-1] = transform[shortcut_idx]  # cancel previous layer transform, apply shortcut transform instead to match output of shortcut layer
@@ -112,15 +115,26 @@ def _transform_state_dict(apply_fn, state_dict, transform, in_place=False, batch
     if not in_place:
         state_dict = deepcopy(state_dict)
     assert len(transform) == len(list(_w_and_b(state_dict)))
-    layers = list(_w_and_b(state_dict, include_batchnorm=True))
+    layers_with_bn = list(_w_and_b(state_dict, include_batchnorm=True))
+    layers = list(_w_and_b(state_dict))
     shortcut_prev = transform[0]  #TODO this is a temporary hack to account for first conv layer in ResNet
     s_prev = None
-    j = 0  # manually track index to only advance on non-batchnorm layers
+    i = 0  # manually track index to only advance on non-batchnorm layers
     with torch.no_grad():
-        for i, ((w_k, w), (b_k, b)) in enumerate(layers):
-            if _is_weight_param(w_k, w):
-                s = transform[j]
-                j += 1
+        for (w_k, w), (b_k, b) in layers_with_bn:
+            if _is_batchnorm(w_k, w):
+                #TODO hack for batchnorm: apply s_prev to running_mean, running_var, gamma, beta
+                running_mean_k = w_k[:-len(".weight")] + ".running_mean"
+                running_var_k = w_k[:-len(".weight")] + ".running_var"
+                state_dict[running_mean_k] = apply_fn(state_dict[running_mean_k], s_prev, True)
+                state_dict[running_var_k] = apply_fn(state_dict[running_var_k], s_prev, True, batchnorm_weight=True)
+                state_dict[w_k] = apply_fn(w, s_prev, True, batchnorm_weight=True)
+                # _w_and_b assigns batchnorm bias to linear layer if linear layer has no bias
+                # so if b is None, then bias was already transformed in the previous iteration
+                if b is not None:
+                    state_dict[b_k] = apply_fn(b, s_prev, True)
+            else:
+                s = transform[i]
                 if i < len(transform) - 1:
                     if s is None and _is_shortcut(*layers[i + 1][0]) and \
                             _is_identity(*layers[i + 1][0], *layers[i + 1][1]):
@@ -140,16 +154,7 @@ def _transform_state_dict(apply_fn, state_dict, transform, in_place=False, batch
                         state_dict[b_k] = apply_fn(b, s, True)
                     state_dict[w_k] = w
                     s_prev = s
-            else:  #TODO hack for batchnorm: apply s_prev to running_mean, running_var, gamma, beta
-                running_mean_k = w_k[:-len(".weight")] + ".running_mean"
-                running_var_k = w_k[:-len(".weight")] + ".running_var"
-                # state_dict[running_mean_k] = apply_fn(state_dict[running_mean_k], s_prev, True)
-                state_dict[running_var_k] = apply_fn(state_dict[running_var_k], s_prev, True, batchnorm_weight=True)
-                state_dict[w_k] = apply_fn(w, s_prev, True, batchnorm_weight=True)
-                # _w_and_b assigns batchnorm bias to linear layer if linear layer has no bias
-                # so if b is None, then bias was already transformed in the previous iteration
-                if b is not None:
-                    state_dict[b_k] = apply_fn(b, s_prev, True)
+                i += 1
     return state_dict
 
 def _align_state_dict(align_fn, *state_dicts, align_shortcut="none"):
@@ -220,7 +225,7 @@ def inverse_scale(scale: list) -> list:
     """
     return [None if s is None else 1 / s for s in scale]
 
-def get_normalizing_scale(state_dict: dict, align_shortcut="none") -> list:
+def get_normalizing_scale(state_dict: dict, align_shortcut="none", min_threshold=1e-16) -> list:
     """Gets scaling terms that normalize weights to a norm of 1.
 
     Args:
@@ -237,7 +242,12 @@ def get_normalizing_scale(state_dict: dict, align_shortcut="none") -> list:
         (_, w), _ = layer
         if s_prev is not None:
             w = w / _broadcast(s_prev, w, 1)
-        return 1 / torch.norm(w.view(w.shape[0], -1), dim=1)
+        scaling = 1 / torch.norm(w.view(w.shape[0], -1), dim=1)
+        mask = scaling < min_threshold
+        if torch.sum(mask) > 0:
+            print(f"Setting {torch.sum(mask)} scaling factors less than {min_threshold} to 1.")
+        scaling[mask] = 1.
+        return scaling
 
     return _align_state_dict(_norm_layer_fn, state_dict, align_shortcut=align_shortcut)
 
@@ -279,7 +289,7 @@ def normalize_batchnorm(state_dict: dict, in_place=False, batchnorm_eps=1e-5) ->
         new_state_dict = deepcopy(state_dict)
     layers = list(_w_and_b(state_dict, include_batchnorm=True))
     for i, ((w_k, w), (b_k, b)) in enumerate(layers):
-        if w.dim() == 1:  # batchnorm
+        if _is_batchnorm(w_k, w):  # batchnorm
             # multiply with previous linear layer
             (prev_w_k, prev_w), (prev_b_k, prev_b) = layers[i-1]
             assert prev_w.dim() > 1  # not another batchnorm
@@ -511,10 +521,15 @@ Random transforms
 def torch_chisq(x):
     return torch.randn(x)**2
 
-def random_scale(state_dict: dict, n_layers=-1,
-        scale_distribution=torch_chisq, scale_shortcut="none",
+def random_scale(state_dict: dict, n_layers=-1, scale_distribution=torch_chisq,
+        scale_shortcut="none", min_threshold=1e-1,
     ) -> list:
-    return _generate_transform(lambda x: scale_distribution(x.shape[0]),
+    def scale_with_threshold(x):
+        sample = scale_distribution(x.shape[0])
+        mask = sample < min_threshold
+        sample[mask] = 1.
+        return sample
+    return _generate_transform(scale_with_threshold,
         state_dict, n_layers=n_layers, transform_shortcut=scale_shortcut)
 
 def random_permutation(state_dict: dict, n_layers=-1, permute_shortcut="none") -> list:
