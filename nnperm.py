@@ -404,23 +404,29 @@ def permute_state_dict(state_dict: dict, permutation: list, in_place=False) -> d
     return _transform_state_dict(_permute_layer, state_dict, permutation, in_place=in_place)
 
 def _optimal_transport_realignment(layers_f, layers_g, s_prev=None, do_align=True,
-        loss_fn=nn.MSELoss(),
+        loss_fn=nn.MSELoss(), bias_loss_weight=1.  #TODO tune this hparam
     ):
-    (w_k, w_f), _ = layers_f
-    (_, w_g), _ = layers_g
+    (w_k, w_f), (b_k, b_f) = layers_f
+    (_, w_g), (_, b_g) = layers_g
     if s_prev is not None:
         w_f = _permute_layer(w_f, s_prev[0], on_output=False)
         w_g = _permute_layer(w_g, s_prev[1], on_output=False)
-    if not do_align:
-        return None, None, loss_fn(w_f, w_g)
     w_f = w_f.reshape(w_f.shape[0], -1)
     w_g = w_g.reshape(w_g.shape[0], -1)
+    if bias_loss_weight > 0 and b_f is not None:  # append bias to weights
+        b_f = b_f.reshape(len(b_f), 1)
+        b_g = b_g.reshape(len(b_g), 1)
+        w_f = torch.cat([w_f, bias_loss_weight * b_f], dim=1)
+        w_g = torch.cat([w_g, bias_loss_weight * b_g], dim=1)
+    if not do_align:
+        return None, None, loss_fn(w_f, w_g)
     print(f"Aligning {w_k} ({w_f.shape[1]} non-output positions)...")
-    permutation_f, permutation_g, best_loss = find_permutation(w_f.detach().cpu().numpy(), w_g.detach().cpu().numpy(), vector_loss_fn=loss_fn)
+    permutation_f, permutation_g, best_loss = find_permutation(
+        w_f.detach().cpu().numpy(), w_g.detach().cpu().numpy(), vector_loss_fn=loss_fn)
     return torch.tensor(permutation_f), torch.tensor(permutation_g), torch.tensor([best_loss])
 
 def get_normalizing_permutation(normalized_state_dict_f: dict, normalized_state_dict_g: dict,
-        loss_fn=nn.MSELoss(), align_shortcut="none",
+        loss_fn=nn.MSELoss(), align_shortcut="none", bias_loss_weight=0.,
     ) -> list:
     """Finds permutation of weights that minimizes difference between two neural nets.
     Uses Tom's algorithm (see writeup).
@@ -456,7 +462,7 @@ def get_normalizing_permutation(normalized_state_dict_f: dict, normalized_state_
     """
     def _wrapper(layer_f, layer_g, s_prev=None, do_align=True):
         return _optimal_transport_realignment(layer_f, layer_g, s_prev=s_prev,
-            do_align=do_align, loss_fn=loss_fn)
+            do_align=do_align, loss_fn=loss_fn, bias_loss_weight=bias_loss_weight)
 
     permutations = _align_state_dict(_wrapper, normalized_state_dict_f,
             normalized_state_dict_g, align_shortcut=align_shortcut)

@@ -56,8 +56,6 @@ def find_permutation(source: np.ndarray, target: np.ndarray, max_tries=10, tau=1
         Tuple[List, float, float]: permutation idx that minimize loss of target[idx] to source,
             margin of soft permutations (smallest value in diagonal), loss achieved by permutation
     """
-
-
     # theorem 1: S(X / \tau) = argmax_P trace(P^T X) + \tau h(P)
     # where S is the sinkhorn operator, P is the permutation, \tau is a hparam, h is entropy
     # we want to find P that minimizes pairwise loss

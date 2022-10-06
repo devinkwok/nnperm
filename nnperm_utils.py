@@ -64,7 +64,7 @@ def error_barrier_linspace_sample(n_samples):
 
 # open_lth
 def get_open_lth_hparams(save_dir):
-    with open(save_dir / f"replicate_1/main/hparams.log", 'r') as f:
+    with open(save_dir / f"replicate_1/level_0/main/hparams.log", 'r') as f:
         hparam_lines = f.readlines()
     hparams = {}
     for line in hparam_lines:
@@ -132,7 +132,7 @@ def open_lth_model_and_data(hparams, n_examples, train=False, device="cuda",
     return model, dataloader
 
 def load_open_lth_state_dict(model, path, replicate, device="cuda"):
-    ckpt = torch.load(path / f"replicate_{replicate}/main/checkpoint.pth",
+    ckpt = torch.load(path / f"replicate_{replicate}/level_pretrain/main/checkpoint.pth",
                     map_location=torch.device(device))
     model = deepcopy(model)
     # use model to fill in missing shortcut weights
@@ -167,7 +167,7 @@ def multiplicative_weight_noise(state_dict, std, n_layers=-1,
                 n_layers -= 1
     return state_dict
 
-def align_and_error(model, state_dict_f, state_dict_g, dataloader, n_samples, loss_fn):
+def align_and_error(model, state_dict_f, state_dict_g, dataloader, n_samples, loss_fn, bias_loss_weight=0.):
 
     def get_errors(state_dict_f, state_dict_g):
         return calculate_errors(model, state_dict_f, state_dict_g,
@@ -176,11 +176,11 @@ def align_and_error(model, state_dict_f, state_dict_g, dataloader, n_samples, lo
     normalized_f, scale_f = canonical_normalization(state_dict_f)
     normalized_g, scale_g = canonical_normalization(state_dict_g)
     s_f, s_g, loss = get_normalizing_permutation(state_dict_f, state_dict_g,
-        loss_fn=loss_fn)
+        loss_fn=loss_fn, bias_loss_weight=bias_loss_weight)
     permuted_f = permute_state_dict(state_dict_f, s_f)
     permuted_g = permute_state_dict(state_dict_g, s_g)
     np_s_f, np_s_g, np_loss = get_normalizing_permutation(normalized_f, normalized_g,
-        loss_fn=loss_fn)
+        loss_fn=loss_fn, bias_loss_weight=bias_loss_weight)
     norm_and_perm_f = permute_state_dict(normalized_f, np_s_f)
     norm_and_perm_g = permute_state_dict(normalized_g, np_s_g)
 
