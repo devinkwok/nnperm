@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --partition=main
+#SBATCH --partition=long
 #SBATCH --cpus-per-task=4
 #SBATCH --gres=gpu:1
 #SBATCH --mem=32G
@@ -19,21 +19,25 @@ else
     source $SLURM_TMPDIR/env/bin/activate
 fi
 
-# ResNet
+# ResNet train_71bc92a970b64a76d7ab7681764b0021
 # MLP
 # S-Conv
+#    train_9d0811cc67a44e1ec85e702a5e01570f  \
 # VGG
-CKPTS=(train_71bc92a970b64a76d7ab7681764b0021  \
+CKPTS=( \
    train_574e51abc295d8da78175b320504f2ba  \
-   train_9d0811cc67a44e1ec85e702a5e01570f  \
    train_7312e802e619673d23c7a02eba8aee52)
 
-LOSS=(L1 L2)
+LOSS=(L2)
+# LOSS=(L1 L2)
 
 parallel --delay=15 --linebuffer --jobs=3  \
     python exp_1.py  \
+        --save_dir=outputs/rebasin-nobn/exp_1  \
+        --ckpt_root=../../open_lth_data  \
         --n_replicates=5  \
         --ckpt={1}  \
         --loss={2}  \
+        --level=train_last  \
     ::: ${CKPTS[@]}  \
     ::: ${LOSS[@]}  \
