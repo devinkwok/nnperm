@@ -15,6 +15,8 @@ from nnperm_utils import evaluate_per_sample, multiplicative_weight_noise, add_s
 import nnperm_old as old
 import nnperm as new
 
+from rebasin.torch_utils import torch_weight_matching
+
 
 class TestPermuteNN(unittest.TestCase):
 
@@ -61,13 +63,13 @@ class TestPermuteNN(unittest.TestCase):
                 ),
                 self.make_dataloader(torch.randn([10, 3, 9, 9])),
             ),
-            (
-                nn.Sequential(
-                    nn.Conv2d(3, 10, 3),
-                    cifar_resnet.Model.Block(10, 5, downsample=True)
-                ),
-                self.make_dataloader(torch.randn([10, 3, 32, 32])),
-            ),
+            # (
+            #     nn.Sequential(
+            #         nn.Conv2d(3, 10, 3),
+            #         cifar_resnet.Model.Block(10, 5, downsample=True)
+            #     ),
+            #     self.make_dataloader(torch.randn([10, 3, 32, 32])),
+            # ),
             (
                 nn.Sequential(
                     cifar_vgg.Model.ConvModule(3, 64),
@@ -76,11 +78,11 @@ class TestPermuteNN(unittest.TestCase):
                 self.make_dataloader(torch.randn([10, 3, 32, 32])),
             ),
             # following models take longer to run
-            (
-                add_skip_weights_to_open_lth_resnet(cifar_resnet.Model.get_model_from_name(
-                      "cifar_resnet_14_4", initializer=kaiming_normal)),
-                self.make_dataloader(torch.randn([10, 3, 32, 32])),
-            ),
+            # (
+            #     add_skip_weights_to_open_lth_resnet(cifar_resnet.Model.get_model_from_name(
+            #           "cifar_resnet_14_4", initializer=kaiming_normal)),
+            #     self.make_dataloader(torch.randn([10, 3, 32, 32])),
+            # ),
             (
                 cifar_vgg.Model.get_model_from_name("cifar_vgg_11", initializer=kaiming_normal),
                 self.make_dataloader(torch.randn([10, 3, 32, 32])),
@@ -284,6 +286,14 @@ class TestPermuteNN(unittest.TestCase):
                 new_state_dict[new_key] = v
             return new_state_dict
         self.validate_symmetry(swap_blocks, model, data)
+
+    def test_git_rebasin_weight_matching(self):
+        for model, data, scale, perm in self.mlp_models:
+            self.validate_permutation_finder(torch_weight_matching, model, perm)
+        for model, data in self.conv_models:
+            perm = new.random_permutation(model.state_dict())
+            self.validate_permutation_finder(torch_weight_matching, model, perm)
+
 
 
 if __name__ == "__main__":

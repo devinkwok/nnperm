@@ -29,6 +29,7 @@ from tqdm import tqdm
 import torch
 import numpy as np
 from torch import nn
+from rebasin.torch_utils import torch_weight_matching
 from sinkhorn import find_permutation
 
 
@@ -37,6 +38,9 @@ Helper functions
 """
 def _is_weight_param(key, value) -> bool:
     return "weight" in key and value.dim() > 1
+
+def _is_norm(key, value) -> bool:
+    return "weight" in key and value.dim() == 1
 
 def _is_batchnorm(key, value) -> bool:
     return "weight" in key and value.dim() == 1
@@ -123,12 +127,13 @@ def _transform_state_dict(apply_fn, state_dict, transform, in_place=False, batch
     i = 0  # manually track index to only advance on non-batchnorm layers
     with torch.no_grad():
         for (w_k, w), (b_k, b) in layers_with_bn:
-            if _is_batchnorm(w_k, w):
+            if _is_norm(w_k, w):
                 #TODO hack for batchnorm: apply s_prev to running_mean, running_var, gamma, beta
                 running_mean_k = w_k[:-len(".weight")] + ".running_mean"
                 running_var_k = w_k[:-len(".weight")] + ".running_var"
-                state_dict[running_mean_k] = apply_fn(state_dict[running_mean_k], s_prev, True)
-                state_dict[running_var_k] = apply_fn(state_dict[running_var_k], s_prev, True, batchnorm_weight=True)
+                if running_mean_k in state_dict:
+                    state_dict[running_mean_k] = apply_fn(state_dict[running_mean_k], s_prev, True)
+                    state_dict[running_var_k] = apply_fn(state_dict[running_var_k], s_prev, True, batchnorm_weight=True)
                 state_dict[w_k] = apply_fn(w, s_prev, True, batchnorm_weight=True)
                 # _w_and_b assigns batchnorm bias to linear layer if linear layer has no bias
                 # so if b is None, then bias was already transformed in the previous iteration
@@ -274,7 +279,7 @@ def scale_state_dict(state_dict: dict, scale: list, in_place=False) -> dict:
 
     return _transform_state_dict(scale_wrapper, state_dict, scale, in_place=in_place)
 
-def normalize_batchnorm(state_dict: dict, in_place=False, batchnorm_eps=1e-5) -> dict:
+def normalize_batchnorm(state_dict: dict, in_place=False, batchnorm_eps=1e-5, reset_batchnorm=False) -> dict:
     """Combines batchnorm with previous linear or convolution layer.
     Assumes there is no non-linearity between the previous layer and batchnorm.
     Sets batchnorm weights to 1 and biases to 0.
@@ -290,7 +295,7 @@ def normalize_batchnorm(state_dict: dict, in_place=False, batchnorm_eps=1e-5) ->
         new_state_dict = deepcopy(state_dict)
     layers = list(_w_and_b(state_dict, include_batchnorm=True))
     for i, ((w_k, w), (b_k, b)) in enumerate(layers):
-        if _is_batchnorm(w_k, w):  # batchnorm
+        if _is_norm(w_k, w):  # batchnorm
             # multiply with previous linear layer
             (prev_w_k, prev_w), (prev_b_k, prev_b) = layers[i-1]
             assert prev_w.dim() > 1  # not another batchnorm
@@ -298,8 +303,17 @@ def normalize_batchnorm(state_dict: dict, in_place=False, batchnorm_eps=1e-5) ->
             #TODO hack: find batchnorm running mean and var using key
             running_mean_k = w_k[:-len(".weight")] + ".running_mean"
             running_var_k = w_k[:-len(".weight")] + ".running_var"
-            running_mean = new_state_dict[running_mean_k]
-            running_var = new_state_dict[running_var_k]
+            # following https://twitter.com/kellerjordan0/status/1570837651741364226?s=12&t=S3IuOYD7lNu27tnxv6g6Yg
+            # reset batchnorm running stats to preserve variance
+            if running_mean_k in state_dict:
+                if reset_batchnorm:
+                    state_dict[running_mean_k] = torch.zeros_like(state_dict[running_mean_k])
+                    state_dict[running_var_k] = torch.ones_like(state_dict[running_var_k])
+                running_mean = new_state_dict[running_mean_k]
+                running_var = new_state_dict[running_var_k]
+            else:
+                running_mean = torch.zeros_like(w)
+                running_var = torch.ones_like(prev_b)
             if torch.all(running_var == torch.ones_like(running_var)):
                 sigma = running_var
             else:
@@ -311,8 +325,9 @@ def normalize_batchnorm(state_dict: dict, in_place=False, batchnorm_eps=1e-5) ->
             new_state_dict[w_k] = torch.ones_like(w)
             #TODO hack: set running_mean to 0 and running_var to 1, move these terms to the weights and biases (gamma and beta)
             # this is because _w_and_b only lists weights and biases, not running values
-            new_state_dict[running_mean_k] = torch.zeros_like(running_mean)
-            new_state_dict[running_var_k] = torch.ones_like(running_var)
+            if running_mean_k in state_dict:
+                new_state_dict[running_mean_k] = torch.zeros_like(running_mean)
+                new_state_dict[running_var_k] = torch.ones_like(running_var)
             # include running mean in beta
             # _w_and_b assigns batchnorm bias to linear layer if linear layer has no bias
             if b is None:  # b_k = missing, prev_b_k = beta in this case
@@ -323,7 +338,7 @@ def normalize_batchnorm(state_dict: dict, in_place=False, batchnorm_eps=1e-5) ->
                 new_state_dict[b_k] = torch.zeros_like(b)
     return new_state_dict
 
-def canonical_normalization(state_dict: dict, align_shortcut="none") -> dict:
+def canonical_normalization(state_dict: dict, align_shortcut="none", reset_batchnorm=False) -> dict:
     """Normalizes weights in each layer of neural network.
     Should not change output of neural network.
 
@@ -333,7 +348,7 @@ def canonical_normalization(state_dict: dict, align_shortcut="none") -> dict:
     Returns:
         dict: pytorch weights with normalized weights
     """
-    state_dict = normalize_batchnorm(state_dict)
+    state_dict = normalize_batchnorm(state_dict, reset_batchnorm=reset_batchnorm)
     scale = get_normalizing_scale(state_dict, align_shortcut=align_shortcut)
     return scale_state_dict(state_dict, scale, in_place=True), scale
 
@@ -460,13 +475,14 @@ def get_normalizing_permutation(normalized_state_dict_f: dict, normalized_state_
             s_g is the canonical permutation for model g,
             and loss is all compared differences between the weights of the two models.
     """
-    def _wrapper(layer_f, layer_g, s_prev=None, do_align=True):
-        return _optimal_transport_realignment(layer_f, layer_g, s_prev=s_prev,
-            do_align=do_align, loss_fn=loss_fn, bias_loss_weight=bias_loss_weight)
+    # def _wrapper(layer_f, layer_g, s_prev=None, do_align=True):
+    #     return _optimal_transport_realignment(layer_f, layer_g, s_prev=s_prev,
+    #         do_align=do_align, loss_fn=loss_fn, bias_loss_weight=bias_loss_weight)
 
-    permutations = _align_state_dict(_wrapper, normalized_state_dict_f,
-            normalized_state_dict_g, align_shortcut=align_shortcut)
-    return list(zip(*permutations))
+    # permutations = _align_state_dict(_wrapper, normalized_state_dict_f,
+    #         normalized_state_dict_g, align_shortcut=align_shortcut)
+    # return list(zip(*permutations))
+    return torch_weight_matching(normalized_state_dict_f, normalized_state_dict_g)
 
 def canonical_permutation(normalized_state_dict_f: dict, normalized_state_dict_g: dict,
         loss_fn=nn.MSELoss(), normalize=True, permute=True, align_shortcut="none",
