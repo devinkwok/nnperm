@@ -182,12 +182,12 @@ class TestNNPerm(unittest.TestCase):
             for model, data in self.sequential_models:
                 state_dict = model.state_dict()
                 perm_spec = PermutationSpec.from_sequential_model(state_dict)
-                for weight_noise, loss, order, make_perm_fn in product(
+                for weight_noise, kernel, order, make_perm_fn in product(
                     [0., 1e-2, 1e-1], ["mse", "sqexp", "linear"], ["forward", "backward", "random"],
                     [perm_spec.get_identity_permutation, perm_spec.get_random_permutation],
                 ):
-                    print(model, weight_noise, loss, order, make_perm_fn)
-                    align_obj = WeightAlignment(perm_spec, loss, seed=seed, order=order)
+                    print(model, weight_noise, kernel, order, make_perm_fn)
+                    align_obj = WeightAlignment(perm_spec, kernel=kernel, seed=seed, order=order)
                     perm = make_perm_fn(state_dict)
                     self.validate_perm_align(model, data, perm_spec, perm, align_obj, noise_std=weight_noise)
 

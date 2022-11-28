@@ -46,16 +46,6 @@ def load_open_lth_model(ckpt, device):
     return hparams, model, params
 
 
-def to_torch_device(state_dict: Dict[str, np.ndarray], device="cuda"):
-    return {k: torch.tensor(v, device=device) if type(v) is not torch.Tensor  \
-            else v.detach().clone() for k, v in state_dict.items()}
-
-
-def to_numpy(state_dict: Dict[str, np.ndarray]):
-    return {k: v.detach().cpu().numpy() if type(v) is torch.Tensor  \
-            else v for k, v in state_dict.items()}
-
-
 def multiplicative_weight_noise(state_dict, std, n_layers=-1,
         include_keywords=[], exclude_keywords=[],
     ):
@@ -69,3 +59,20 @@ def multiplicative_weight_noise(state_dict, std, n_layers=-1,
                 state_dict[k] = v * noise
                 n_layers -= 1
     return state_dict
+
+
+def to_torch_device(state_dict: Dict[str, np.ndarray], device="cuda"):
+    return {k: torch.tensor(v, device=device) if type(v) is not torch.Tensor  \
+            else v.detach().clone() for k, v in state_dict.items()}
+
+
+def to_numpy(state_dict: Dict[str, np.ndarray]):
+    return {k: v.detach().cpu().numpy() if type(v) is torch.Tensor  \
+            else v for k, v in state_dict.items()}
+
+
+def keys_match(a: dict, b: dict):
+    for k in set(list(a.keys()) + list(b.keys())):
+        if not (k in a and k in b):
+            return False
+    return True
