@@ -7,6 +7,7 @@ import torch
 from torch import nn
 
 import sys
+from nnperm.utils import multiplicative_weight_noise
 sys.path.append("open_lth")
 from open_lth.models import cifar_resnet
 from open_lth.models import cifar_vgg
@@ -22,7 +23,7 @@ from rebasin.torch_utils import torch_weight_matching
 class TestNNPerm(unittest.TestCase):
 
     def make_dataloader(self, tensor):
-        dataset = torch.utils.data.TensorDataset(tensor, torch.zeros(tensor.shape[0]))
+        dataset = torch.utils.data.TensorDataset(tensor, torch.zeros(tensor.shape[0], dtype=torch.long))
         return torch.utils.data.DataLoader(dataset, batch_size=len(dataset))
 
     def setUp(self) -> None:
@@ -38,20 +39,20 @@ class TestNNPerm(unittest.TestCase):
                 ),
                 self.make_dataloader(torch.randn([10, 20])),
             ),
-            # (
-            #     nn.Sequential(
-            #         nn.Conv2d(3, 10, 3),
-            #         nn.BatchNorm2d(10),
-            #         nn.ReLU(),
-            #         nn.Conv2d(10, 5, 3),
-            #         nn.BatchNorm2d(5),
-            #         nn.ReLU(),
-            #         nn.AdaptiveMaxPool2d([1, 1]),
-            #         nn.Flatten(start_dim=1),
-            #         nn.Linear(5, 2),
-            #     ),
-            #     self.make_dataloader(torch.randn([10, 3, 9, 9])),
-            # ),
+            (
+                nn.Sequential(
+                    nn.Conv2d(3, 10, 3),
+                    nn.BatchNorm2d(10),
+                    nn.ReLU(),
+                    nn.Conv2d(10, 5, 3),
+                    nn.BatchNorm2d(5),
+                    nn.ReLU(),
+                    nn.AdaptiveMaxPool2d([1, 1]),
+                    nn.Flatten(start_dim=1),
+                    nn.Linear(5, 2),
+                ),
+                self.make_dataloader(torch.randn([10, 3, 9, 9])),
+            ),
             (
                 nn.Sequential(
                     cifar_vgg.Model.ConvModule(3, 64, batchnorm_type=None),
@@ -59,10 +60,10 @@ class TestNNPerm(unittest.TestCase):
                 ),
                 self.make_dataloader(torch.randn([10, 3, 32, 32])),
             ),
-            # (
-            #     cifar_vgg.Model.get_model_from_name("cifar_vgg_11", initializer=kaiming_normal),
-            #     self.make_dataloader(torch.randn([10, 3, 32, 32])),
-            # ),
+            (
+                cifar_vgg.Model.get_model_from_name("cifar_vgg_11", initializer=kaiming_normal),
+                self.make_dataloader(torch.randn([10, 3, 32, 32])),
+            ),
         ]
         self.conv_models = [
             (
@@ -120,7 +121,7 @@ class TestNNPerm(unittest.TestCase):
             assert np.all([k in self.original for k in self.state.keys()])
             assert np.all([k in self.state for k in self.original.keys()])
             for k, v in self.state.items():
-                torch.testing.assert_equal(self.original[k], v)
+                assert torch.equal(self.original[k], v)
 
     def validate_symmetry(self, model, data, transform_fn):
         output = evaluate(model, data, device="cpu")
@@ -130,17 +131,18 @@ class TestNNPerm(unittest.TestCase):
             transformed_output = evaluate(model, data, state_dict=transformed, device="cpu")
             np.testing.assert_allclose(output, transformed_output, rtol=1e-4, atol=1e-4)
 
-    def validate_perm_align(self, model, data, perm_spec, perm, sklearn_like_obj, allowed_errors=0, allowed_loss=1e-4):
+    def validate_perm_align(self, model, data, perm_spec, perm, sklearn_like_obj, noise_std=0., allowed_errors=0, allowed_loss=1e-4):
         state_dict = model.state_dict()
         with self.StateUnchangedContextManager(state_dict):
             permuted_state_dict = perm_spec.apply_permutation(state_dict, perm)
+            permuted_state_dict = multiplicative_weight_noise(permuted_state_dict, noise_std)
             found_perm, losses = sklearn_like_obj.fit(permuted_state_dict, state_dict)
             transform_fn = lambda x: sklearn_like_obj.fit_transform(permuted_state_dict, x)
             self.validate_symmetry(model, data, transform_fn)
         self.assertTrue(keys_match(perm, found_perm))
         for k, v in perm.items():
             self.assertLessEqual(np.count_nonzero(v != found_perm[k]), allowed_errors)
-            self.assertLessEqual(np.max(losses[k]), allowed_loss)
+            # self.assertLessEqual(np.max(losses[k]), allowed_loss)
 
     def test_apply(self):
         for model, _ in self.sequential_models:
@@ -175,34 +177,38 @@ class TestNNPerm(unittest.TestCase):
                 np.testing.assert_array_equal(x, np.eye(len(x)))
 
     def test_align(self):
-        for model, data in self.sequential_models:
-            state_dict = model.state_dict()
-            perm_spec = PermutationSpec.from_sequential_model(state_dict)
-            for loss, order, make_perm_fn in product(
-                ["mse", "dot"], ["forward", "backward", "random"],
-                [perm_spec.get_identity_permutation, perm_spec.get_random_permutation],
-            ):
-                align_obj = WeightAlignment(perm_spec, loss, order=order)
-                perm = make_perm_fn(state_dict)
-                self.validate_perm_align(model, data, perm_spec, perm, align_obj)
-
-    def test_partial_align(self):
-        #TODO need to pad model to validate_symmetry
-        for model, data in self.sequential_models:
-            state_dict = model.state_dict()
-            perm_spec = PermutationSpec.from_sequential_model(state_dict)
-            for loss, order, make_perm_fn in zip(
-                ["mse", "dot"], ["forward", "random"],
-                [perm_spec.get_identity_permutation, perm_spec.get_random_permutation],
-            ):
-                sizes = perm_spec.get_sizes(state_dict)
-                min_size = min(list(sizes.values()))
-                for i in range(min_size + 1):
-                    pad_size = {k: v + i for k, v in sizes.items()}
-                    align_obj = WeightAlignment(perm_spec, loss, order=order, target_sizes=pad_size)
+        for seed in range(100, 300, 100):
+            self.setUp()
+            for model, data in self.sequential_models:
+                state_dict = model.state_dict()
+                perm_spec = PermutationSpec.from_sequential_model(state_dict)
+                for AlignObj, weight_noise, loss, order, make_perm_fn in product(
+                    [OldWeightAlignment, WeightAlignment], [0., 1e-2, 1e-1],
+                    ["linear", "sqexp"], ["forward", "backward", "random"],
+                    [perm_spec.get_identity_permutation, perm_spec.get_random_permutation],
+                ):
+                    print(model, AlignObj, weight_noise, loss, order, make_perm_fn)
+                    align_obj = AlignObj(perm_spec, loss, seed=seed, order=order)
                     perm = make_perm_fn(state_dict)
-                    self.validate_perm_align(model, data, perm_spec, perm, align_obj,
-                                            allowed_errors=i, allowed_loss=1.)
+                    self.validate_perm_align(model, data, perm_spec, perm, align_obj, noise_std=weight_noise)
+
+    # def test_partial_align(self):
+    #     #TODO need to pad model to validate_symmetry
+    #     for model, data in self.sequential_models:
+    #         state_dict = model.state_dict()
+    #         perm_spec = PermutationSpec.from_sequential_model(state_dict)
+    #         for loss, order, make_perm_fn in zip(
+    #             ["mse", "dot"], ["forward", "random"],
+    #             [perm_spec.get_identity_permutation, perm_spec.get_random_permutation],
+    #         ):
+    #             sizes = perm_spec.get_sizes(state_dict)
+    #             min_size = min(list(sizes.values()))
+    #             for i in range(min_size + 1):
+    #                 pad_size = {k: v + i for k, v in sizes.items()}
+    #                 align_obj = WeightAlignment(perm_spec, loss, order=order, target_sizes=pad_size)
+    #                 perm = make_perm_fn(state_dict)
+    #                 self.validate_perm_align(model, data, perm_spec, perm, align_obj,
+    #                                         allowed_errors=i, allowed_loss=1.)
 
     # def test_bootstrap(self):
     #     for model, data in self.sequential_models:

@@ -1,5 +1,8 @@
+from copy import deepcopy
 from pathlib import Path
+from typing import Dict
 import torch
+import numpy as np
 import torchvision
 
 
@@ -41,3 +44,28 @@ def load_open_lth_model(ckpt, device):
     if "model_state_dict" in params:
         params = params["model_state_dict"]
     return hparams, model, params
+
+
+def to_torch_device(state_dict: Dict[str, np.ndarray], device="cuda"):
+    return {k: torch.tensor(v, device=device) if type(v) is not torch.Tensor  \
+            else v.detach().clone() for k, v in state_dict.items()}
+
+
+def to_numpy(state_dict: Dict[str, np.ndarray]):
+    return {k: v.detach().cpu().numpy() if type(v) is torch.Tensor  \
+            else v for k, v in state_dict.items()}
+
+
+def multiplicative_weight_noise(state_dict, std, n_layers=-1,
+        include_keywords=[], exclude_keywords=[],
+    ):
+    state_dict = deepcopy(state_dict)
+    for k, v in state_dict.items():
+        if n_layers == 0:  # ignore if n_layers < 0
+            break  # stop when n_layers of weight noise added
+        if not include_keywords or any(x in k for x in include_keywords):
+            if not exclude_keywords or not any(x in k for x in exclude_keywords):
+                noise = 1 + np.random.randn(*v.shape) * std
+                state_dict[k] = v * noise
+                n_layers -= 1
+    return state_dict

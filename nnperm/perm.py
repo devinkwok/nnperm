@@ -4,6 +4,8 @@ import torch.nn as nn
 from collections import defaultdict
 from typing import Dict, List, Tuple, Union
 
+from nnperm.utils import to_numpy
+
 
 def perm_to_list(perm_matrix: np.ndarray) ->  np.ndarray:
     n = perm_matrix.shape[0]
@@ -154,7 +156,7 @@ class PermutationSpec:
         Returns:
             Dict[str, np.ndarray]: copy of state dict with transformation applied
         """
-        output = deepcopy(state_dict)
+        output = deepcopy(to_numpy(state_dict))
         for p, transform in transform_dict.items():
             for layer_name, dim in self.perm_to_axes[p]:
                 output[layer_name] = apply_fn(transform, output[layer_name], dim)
@@ -182,7 +184,3 @@ class PermutationSpec:
 
     def apply_padding(self, state_dict: Dict[str, np.ndarray], target_size: Dict[str, int]):
         return self._transform_state_dict(self.append_zeros, state_dict, target_size)
-
-    @staticmethod
-    def torch_to_numpy(state_dict: Dict[str, np.ndarray]):
-        return {n: x.detach().cpu().numpy() for n, x in state_dict.items()}

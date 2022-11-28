@@ -13,7 +13,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument('--ckpt_a', required=True, type=Path)
 parser.add_argument('--ckpt_b', required=True, type=Path)
 parser.add_argument('--save_file', required=True, type=Path)
-parser.add_argument('--loss', required=True, type=str)
+parser.add_argument('--kernel', required=True, type=str)
 #TODO partial permutations
 # parser.add_argument('--align_type', default="constant", type=str)
 # parser.add_argument('--max_align_frac', default=1., type=float)
@@ -29,8 +29,8 @@ args = parser.parse_args()
 hparams, model, params_a = load_open_lth_model(args.ckpt_a, args.device)
 #TODO: for now assume model and hparams are the same
 _, _, params_b = load_open_lth_model(args.ckpt_b, args.device)
-train_dataloader = load_data(hparams, args.n_train, False)
-test_dataloader = load_data(hparams, args.n_test, True)
+train_dataloader = load_data(hparams, args.n_train, True)
+test_dataloader = load_data(hparams, args.n_test, False)
 perm_spec = PermutationSpec.from_sequential_model(params_a)
 target_sizes = None
 print(hparams)
@@ -46,7 +46,7 @@ print(hparams)
 
 align_obj = WeightAlignment(
             perm_spec,
-            loss=args.loss,
+            kernel=args.kernel,
             bootstrap=args.n_bootstrap,
             target_sizes=target_sizes,
             init_perm=None,
@@ -56,19 +56,19 @@ align_obj = WeightAlignment(
             seed=42,
             order="random",
             verbose=False)
-params_a = align_obj.perm_spec.torch_to_numpy(params_a)
-params_b = align_obj.perm_spec.torch_to_numpy(params_b)
 perm, align_loss = align_obj.fit(params_a, params_b)
 aligned_params = align_obj.transform()  # this returns np arrays
 #TODO partial permutations
 
 randperm = align_obj.perm_spec.get_random_permutation(params_b)
 randperm_params = align_obj.perm_spec.apply_permutation(params_b, randperm)
+known_perm, known_align_loss = align_obj.fit(params_b, randperm_params)
+known_aligned_params = align_obj.transform()
 
 def barrier(a, b, is_train=False):
     return get_barrier_stats(model, train_dataloader if is_train else test_dataloader,
         a, b, # mask_a, mask_b,
-        resolution=args.barrier_resolution, reduction='mean', device=args.device)
+        resolution=args.barrier_resolution, reduction="mean", device=args.device)
 
 stats = {
     "args": vars(args),
@@ -82,6 +82,12 @@ stats = {
     "test_randperm": barrier(params_a, randperm_params, False),
     "train_aligned": barrier(params_a, aligned_params, True),
     "test_aligned": barrier(params_a, aligned_params, False),
+    "known_perm": known_perm,
+    "known_align_loss": known_align_loss,
+    "train_known_control": barrier(params_b, randperm_params, True),
+    "test_known_control": barrier(params_b, randperm_params, False),
+    "train_known_aligned": barrier(params_b, known_aligned_params, True),
+    "test_known_aligned": barrier(params_b, known_aligned_params, False),
 }
 args.save_file.parent.mkdir(parents=True, exist_ok=True)
 torch.save(stats, args.save_file)

@@ -1,9 +1,9 @@
-from collections import defaultdict
 from copy import deepcopy
 from tqdm import tqdm
 import torch
 import torch.nn as nn
 import numpy as np
+from nnperm.utils import to_torch_device
 
 
 class EnsembleModel(nn.Module):
@@ -25,22 +25,22 @@ class EnsembleModel(nn.Module):
 # 1, B_shared|A_unique, B_shared|B_unique
 
 
-def to_torch_device(params, device="cuda"):
-    return {k: torch.tensor(v, device=device) if type(v) is not torch.Tensor else v  \
-            for k, v in params.items()}
-
-
 def interpolate_params(alpha, params_a, params_b):
     return {k: alpha * params_a[k] + (1 - alpha) * params_b[k]  \
             for k in params_a.keys()}
 
 
-def evaluate(model, dataloader, state_dict=None, device="cuda"):
+def evaluate(model,
+        dataloader,
+        state_dict=None,
+        loss_fn=lambda x, l: x,  # default is identity
+        device="cuda",
+        return_accuracy=False,
+):
     if state_dict is not None:
         model = deepcopy(model)
-        state_dict = deepcopy(state_dict)
+        state_dict = to_torch_device(state_dict, device)
         model.load_state_dict(state_dict)
-    loss_fn = nn.CrossEntropyLoss(reduction="none")
     model.eval()
     loss, acc = [], []
     with torch.no_grad():
@@ -48,11 +48,14 @@ def evaluate(model, dataloader, state_dict=None, device="cuda"):
             x = x.to(device=device)
             labels = labels.to(device=device)
             y = model(x)
-            accuracy = torch.argmax(y, dim=-1) == labels
-            y = loss_fn(y, labels)
-            acc.append(accuracy.cpu().detach().numpy())
-            loss.append(y.cpu().detach().numpy())
-    return np.concatenate(loss), np.concatenate(acc)
+            if return_accuracy:
+                accuracy = torch.argmax(y, dim=-1) == labels
+                acc.append(accuracy.cpu().detach().numpy())
+            loss.append(loss_fn(y, labels).cpu().detach().numpy())
+    if return_accuracy:
+        return np.concatenate(loss), np.concatenate(acc)
+    else:
+        return np.concatenate(loss)
 
 
 def reduce(values, reduction, axis):
@@ -75,6 +78,7 @@ def get_barrier_stats(
         dataloader,
         params_a,
         params_b,
+        loss_fn=nn.CrossEntropyLoss(reduction="none"),
         resolution=11,
         reduction="mean",
         device="cuda",
@@ -85,7 +89,8 @@ def get_barrier_stats(
     eval_loss, acc = [], []
     for alpha in tqdm(interpolation):
         combined = interpolate_params(alpha, params_a, params_b)
-        l, a = evaluate(model, dataloader, combined, device=device)
+        l, a = evaluate(model, dataloader, state_dict=combined,
+                        loss_fn=loss_fn, device=device, return_accuracy=True)
         eval_loss.append(l)
         acc.append(a)
     eval_loss = np.stack(eval_loss, axis=0)
