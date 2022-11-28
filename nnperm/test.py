@@ -183,7 +183,7 @@ class TestNNPerm(unittest.TestCase):
                 state_dict = model.state_dict()
                 perm_spec = PermutationSpec.from_sequential_model(state_dict)
                 for weight_noise, loss, order, make_perm_fn in product(
-                    [0., 1e-2, 1e-1], ["linear", "sqexp"], ["forward", "backward", "random"],
+                    [0., 1e-2, 1e-1], ["mse", "sqexp", "linear"], ["forward", "backward", "random"],
                     [perm_spec.get_identity_permutation, perm_spec.get_random_permutation],
                 ):
                     print(model, weight_noise, loss, order, make_perm_fn)

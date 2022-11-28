@@ -5,11 +5,14 @@ from tqdm import tqdm
 import torch
 import numpy as np
 from scipy.optimize import linear_sum_assignment
-from nnperm.perm import PermutationSpec
+
 import sys
-from nnperm.utils import to_numpy
 sys.path.append("./repsim/")
 from repsim.kernels import Linear, SquaredExponential
+from repsim.util import pdist2
+
+from nnperm.perm import PermutationSpec
+from nnperm.utils import to_numpy
 
 
 def keys_match(a: dict, b: dict):
@@ -64,9 +67,16 @@ class WeightAlignment:
         if self.kernel == "linear":  # hack: change to use torch tensors instead of np.ndarray
             kernel_fn = lambda x, y: Linear()(torch.tensor(x).to(
                 dtype=torch.float), torch.tensor(y).to(dtype=torch.float)).numpy()
+        elif self.kernel == "mse":
+            kernel_fn = lambda x, y: -pdist2(torch.tensor(x).to(
+                dtype=torch.float), torch.tensor(y).to(dtype=torch.float)).numpy()
         elif self.kernel == "sqexp":
-            kernel_fn = lambda x, y: SquaredExponential(length_scale=1.)(torch.tensor(
-                x).to(dtype=torch.float), torch.tensor(y).to(dtype=torch.float)).numpy()
+            def sqexp_fn(x, y):
+                try:
+                    return SquaredExponential(length_scale="auto")(torch.tensor(x).to(dtype=torch.float), torch.tensor(y).to(dtype=torch.float)).numpy()
+                except RuntimeWarning:
+                    return SquaredExponential(length_scale=1.)(torch.tensor(x).to(dtype=torch.float), torch.tensor(y).to(dtype=torch.float)).numpy()
+            kernel_fn = sqexp_fn
         else:
             kernel_fn = self.kernel
 
