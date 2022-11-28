@@ -17,8 +17,6 @@ from nnperm.perm import PermutationSpec
 from nnperm.align import *
 from nnperm.error import evaluate
 
-from rebasin.torch_utils import torch_weight_matching
-
 
 class TestNNPerm(unittest.TestCase):
 
