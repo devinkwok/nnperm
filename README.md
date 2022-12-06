@@ -1,34 +1,37 @@
-# Neural network symmetries and linear mode connectivity
+# Neural network permutation symmetries and linear mode connectivity
+
 
 ## Requirements
 
-Install `open_lth` in same directory.
+Requires `repsim` for kernels. Uses `open_lth` to train models.
+Install requirements using `pip install -r requirements.txt`.
+
 
 ## Usage
 
-To train models for analysis, run `train-models.sh`.
+To train models for analysis, run `scripts/train-models.sh`.
 
-To run experiments, run `exp-run.sh`.
+To run experiments, run `scripts/align-all.sh`.
 
-See `exp-plots.ipynb` for results.
+See `plots/` for results.
 
-Assumptions made by `nnperm`:
-* BatchNorm precedes non-linearity
-* if last Conv layer has X output channels, final linear layer takes X inputs
-    - this means pooling/stride should reduce all image dims
-* network is not going to be trained further (BatchNorm running mean/var aren't used)
-* if using cache=True in get_normalizing_permutation, loss function is applied elementwise (e.g. this is true for MSE or MAE loss)
+The `nnperm.align.WeightAlignment` object and its inherited classes have a sci-kit learn style interface.
+Call `fit()` and `transform()` to find and apply weight alignments.
+Computed properties such as `perms_` and `similarity_` are appended with a `_`.
 
-ResNet assumptions:
-* Conv layer has no bias, but is followed by BatchNorm with bias
-* shortcut connections always have weights (if not transformed, set as identity matrix without bias)
-* the first shortcut points to the output of the first layer, subsequent shortcuts point to output of previous shortcut
-* shortcuts apply an optional linear transform, then are added to the output of the previous (block) layer
+The permutations appropriate for a given model architecture are recorded in a `PermutationSpec` object.
+This object is based on code from Ainsworth, Hayase, & Srinivasa (2022) at [https://github.com/samuela/git-re-basin](https://github.com/samuela/git-re-basin).
+
 
 ## Development
 
 Permutations and scaling in `nnperm.py`.
-Permutation finding algorithm using optimal transport in `sinkhorn.py`.
-Original implementation of geometric realignment by Udbhav Bamba (with modifications) kept in `nnperm_old.py` for testing purposes. 
+`PermutationSpec` and part of the `fit()` algorithm are based on Ainsworth, Hayase, & Srinivasa (2022).
+Original implementation of geometric realignment (a different depreciated algorithm) by Udbhav Bamba.
 
-To run unit tests, call `python test_nnperm.py`.
+To run unit tests, call `python -m nnperm.test`.
+
+
+## Citations
+
+Ainsworth, S. K., Hayase, J., & Srinivasa, S. (2022). Git re-basin: Merging models modulo permutation symmetries. arXiv preprint arXiv:2209.04836.

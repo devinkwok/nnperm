@@ -14,10 +14,6 @@ parser.add_argument('--ckpt_a', required=True, type=Path)
 parser.add_argument('--ckpt_b', required=True, type=Path)
 parser.add_argument('--save_file', required=True, type=Path)
 parser.add_argument('--kernel', required=True, type=str)
-#TODO partial permutations
-# parser.add_argument('--align_type', default="constant", type=str)
-# parser.add_argument('--max_align_frac', default=1., type=float)
-parser.add_argument('--n_bootstrap', default=0, type=int)
 parser.add_argument('--barrier_resolution', default=11, type=int)
 parser.add_argument('--n_train', default=10000, type=int)
 parser.add_argument('--n_test', default=10000, type=int)
@@ -27,7 +23,6 @@ args = parser.parse_args()
 
 # get model and data
 hparams, model, params_a = load_open_lth_model(args.ckpt_a, args.device)
-#TODO: for now assume model and hparams are the same
 _, _, params_b = load_open_lth_model(args.ckpt_b, args.device)
 train_dataloader = load_data(hparams, args.n_train, True)
 test_dataloader = load_data(hparams, args.n_test, False)
@@ -35,30 +30,16 @@ perm_spec = PermutationSpec.from_sequential_model(params_a)
 target_sizes = None
 print(hparams)
 
-#TODO partial permutations
-# if args.align == "constant":
-#     target_sizes = perm_spec.get_sizes(params_a)
-#     target_sizes = {k: v * (1 + args.max_align_frac) for k, v in target_sizes.items()}
-# elif args.align == "increasing":
-#     target_sizes = None  #TODO
-# elif args.align == "decreasing":
-#     target_sizes = None  #TODO
-
 align_obj = WeightAlignment(
             perm_spec,
             kernel=args.kernel,
-            bootstrap=args.n_bootstrap,
-            target_sizes=target_sizes,
             init_perm=None,
             max_iter=100,
-            cost_ramp_slope=0.,
-            cost_margin=-0.1,
             seed=42,
             order="random",
             verbose=False)
 perm, align_loss = align_obj.fit(params_a, params_b)
 aligned_params = align_obj.transform()  # this returns np arrays
-#TODO partial permutations
 
 randperm = align_obj.perm_spec.get_random_permutation(params_b)
 randperm_params = align_obj.perm_spec.apply_permutation(params_b, randperm)

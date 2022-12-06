@@ -4,3 +4,4 @@ matplotlib>=3.5.2
 tqdm>=4.64.0
 scipy>=1.7.1
 git+https://github.com/wrongu/repsim.git
+git+https://github.com/wrongu/open_lth.git
