@@ -2,6 +2,6 @@ PermutationInvariance
 figures
 outputs
 refactor-outputs
-open_lth
 *.pyc
 TODO.txt
+slurm-scripts

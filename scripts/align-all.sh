@@ -7,17 +7,7 @@
 #SBATCH --output=align-all-%j.out
 #SBATCH --error=align-all-%j.err
 
-module load python/3.7
-module load pytorch/1.4
-
-if ! [ -d "$SLURM_TMPDIR/env/" ]; then
-    virtualenv $SLURM_TMPDIR/env/
-    source $SLURM_TMPDIR/env/bin/activate
-    pip install --upgrade pip
-    pip install -r requirements.txt
-else
-    source $SLURM_TMPDIR/env/bin/activate
-fi
+source ./open_lth/slurm-setup.sh
 
 # CKPT_ROOT=$HOME/
 CKPT_ROOT=$HOME/scratch/open_lth_data/
