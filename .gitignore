@@ -1,6 +1,7 @@
 PermutationInvariance
 figures
 outputs
+git-re-basin
 refactor-outputs
 *.pyc
 TODO.txt
