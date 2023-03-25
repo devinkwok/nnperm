@@ -1,49 +1,30 @@
 from copy import deepcopy
-from pathlib import Path
-from typing import Dict
+from typing import Dict, List
 import torch
 import numpy as np
-import torchvision
 
 
 import sys
 sys.path.append("open_lth")
-from open_lth.foundations.hparams import load_hparams_from_file, ckpt_hparam_path, ModelHparams
-from open_lth.models import registry
-from open_lth.platforms.platform import get_platform
+from open_lth.api import get_ckpt, get_dataset_hparams, get_dataloader, find_ckpt_by_it, get_device
 
 
-def load_data(hparams, n_examples, train, data_root=None):
-    if data_root is None:
-        data_root = Path(get_platform().dataset_root)
-    if hparams["Dataset"]["dataset_name"] == "cifar10":
-        transforms = torchvision.transforms.Compose([
-            torchvision.transforms.ToTensor(),
-            torchvision.transforms.Normalize(
-                [0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
-        ])
-        dataset = torchvision.datasets.CIFAR10(root=data_root / "cifar10",
-                    train=train, download=False, transform=transforms)
-    elif hparams["Dataset"]["dataset_name"] == "mnist":
-        transforms = torchvision.transforms.Compose([
-            torchvision.transforms.ToTensor(),
-            torchvision.transforms.Normalize(mean=[0.1307], std=[0.3081])
-        ])
-        dataset = torchvision.datasets.MNIST(root=data_root / "mnist",
-                    train=train, download=False, transform=transforms)
-    else:
-        raise ValueError(f"Unsupported dataset {hparams['Dataset']['dataset_name']}")
-    dataset = torch.utils.data.Subset(dataset, torch.arange(n_examples))
-    return torch.utils.data.DataLoader(dataset, batch_size=n_examples, shuffle=False)
+def device():
+    return get_device()
 
 
-def load_open_lth_model(ckpt, device):
-    hparams = load_hparams_from_file(ckpt_hparam_path(ckpt))
-    model = registry.get(ModelHparams.create_from_dict(hparams["Model"])).to(device=device)
-    params = torch.load(ckpt)
-    if "model_state_dict" in params:
-        params = params["model_state_dict"]
-    return hparams, model, params
+def get_open_lth_ckpt(ckpt_path):
+    return get_ckpt(ckpt_path)
+
+
+def get_open_lth_data(dataset_hparams, n_train, n_test, batch_size=5000):
+    train_dataloader = get_dataloader(dataset_hparams, n_train, batch_size)
+    test_dataloader = get_dataloader(dataset_hparams, n_test, batch_size)
+    return train_dataloader, test_dataloader
+
+
+def find_open_lth_ckpt(replicate_dir, ep_it):
+    return find_ckpt_by_it(replicate_dir, ep_it)
 
 
 def multiplicative_weight_noise(state_dict, std, n_layers=-1,
@@ -62,12 +43,12 @@ def multiplicative_weight_noise(state_dict, std, n_layers=-1,
 
 
 def to_torch_device(state_dict: Dict[str, np.ndarray], device="cuda"):
-    return {k: torch.tensor(v, device=device) if type(v) is not torch.Tensor  \
-            else v.detach().clone() for k, v in state_dict.items()}
+    return {k: torch.tensor(v, device=device) if not isinstance(v, torch.Tensor)  \
+            else v.detach().clone().to(device=device) for k, v in state_dict.items()}
 
 
 def to_numpy(state_dict: Dict[str, np.ndarray]):
-    return {k: v.detach().cpu().numpy() if type(v) is torch.Tensor  \
+    return {k: v.detach().cpu().numpy() if isinstance(v, torch.Tensor)  \
             else v for k, v in state_dict.items()}
 
 
@@ -76,3 +57,20 @@ def keys_match(a: dict, b: dict):
         if not (k in a and k in b):
             return False
     return True
+
+
+def is_valid_key(key: str, include_keywords: List[str] = None, exclude_keywords: List[str] = None):
+    if include_keywords is not None:
+        if not any(k in key for k in include_keywords):
+            return False
+    if exclude_keywords is not None:
+        if any(k in key for k in exclude_keywords):
+            return False
+    return True
+
+
+def parse_int_list(arg):  # parse str containing range or list of ints
+    if "-" in arg:
+        start, end = arg.split("-")
+        return list(range(int(start), int(end) + 1))
+    return [int(x) for x in arg.split(",")]

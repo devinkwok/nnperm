@@ -1,7 +1,8 @@
-torch==1.8.1
-torchvision==0.9.1
+torch==1.13.1
+torchvision==0.14.1
 matplotlib>=3.5.2
 tqdm>=4.64.0
 scipy>=1.7.1
-git+https://github.com/wrongu/repsim.git
-git+https://github.com/wrongu/open_lth.git
+scikit-learn
+pandas
+# git+https://github.com/devinkwok/open_lth@example-difficulty

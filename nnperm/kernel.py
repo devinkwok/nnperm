@@ -1,30 +1,17 @@
 import torch
 import numpy as np
 
-import sys
-sys.path.append("./repsim/")
-from repsim.kernels import Linear, SquaredExponential
-from repsim.util import pdist2
-
-
-def _apply_repsim_kernel(x, y, kernel_fn):
-    return kernel_fn(torch.tensor(x).to(
-        dtype=torch.float), torch.tensor(y).to(dtype=torch.float)).numpy()
+from sklearn.metrics.pairwise import cosine_similarity
 
 
 def linear_kernel(x, y):
-    return _apply_repsim_kernel(x, y, Linear())
+    x = torch.tensor(x).to(dtype=torch.float).contiguous()
+    y = torch.tensor(y).to(dtype=torch.float).contiguous()
+    return torch.einsum("n...,m...->nm", x, y).numpy()
 
 
-def mse_kernel(x, y):
-    return _apply_repsim_kernel(x, y, lambda a, b: -pdist2(a, b))
-
-
-def sqexp_kernel(x, y):
-    try:
-        return _apply_repsim_kernel(x, y, SquaredExponential(length_scale="auto"))
-    except RuntimeWarning:
-        return _apply_repsim_kernel(x, y, SquaredExponential(length_scale=1.))
+def cosine_kernel(x, y):
+    return cosine_similarity(x, y)
 
 
 def bootstrap_kernel(a: np.ndarray, b: np.ndarray,
@@ -41,10 +28,8 @@ def bootstrap_kernel(a: np.ndarray, b: np.ndarray,
 def get_kernel_from_name(name: str, seed=None):
     if "linear" in name:  # hack: change to use torch tensors instead of np.ndarray
         kernel_fn = linear_kernel
-    elif "mse" in name:
-        kernel_fn = mse_kernel
-    elif "sqexp" in name:
-        kernel_fn = sqexp_kernel
+    elif "cosine" in name:
+        kernel_fn = cosine_kernel
     else:
         raise ValueError(f"Unrecognized name for kernel: {name}")
 

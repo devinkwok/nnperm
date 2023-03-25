@@ -5,7 +5,7 @@ import torch
 from nnperm.align import WeightAlignment
 from nnperm.error import get_barrier_stats
 from nnperm.perm import PermutationSpec
-from nnperm.utils import load_open_lth_model, load_data
+from nnperm.utils import get_open_lth_ckpt, get_open_lth_data, device
 
 
 ## Setup
@@ -18,45 +18,60 @@ parser.add_argument('--barrier_resolution', default=11, type=int)
 parser.add_argument('--n_train', default=10000, type=int)
 parser.add_argument('--n_test', default=10000, type=int)
 parser.add_argument('--seed', default=42, type=int)
-parser.add_argument('--device', default="cuda", type=str)
+parser.add_argument('--save_all_similarities', default=False, action="store_true")
 args = parser.parse_args()
 
 # get model and data
-hparams, model, params_a = load_open_lth_model(args.ckpt_a, args.device)
-_, _, params_b = load_open_lth_model(args.ckpt_b, args.device)
-train_dataloader = load_data(hparams, args.n_train, True)
-test_dataloader = load_data(hparams, args.n_test, False)
+(model_hparams, dataset_hparams), model, params_a = get_open_lth_ckpt(args.ckpt_a)
+_, _, params_b = get_open_lth_ckpt(args.ckpt_b)
+train_dataloader, test_dataloader = get_open_lth_data(dataset_hparams, args.n_train, args.n_test)
 perm_spec = PermutationSpec.from_sequential_model(params_a)
-target_sizes = None
-print(hparams)
+print(model_hparams.display)
+print(dataset_hparams.display)
 
-align_obj = WeightAlignment(
-            perm_spec,
-            kernel=args.kernel,
-            init_perm=None,
-            max_iter=100,
-            seed=42,
-            order="random",
-            verbose=False)
-perm, align_loss = align_obj.fit(params_a, params_b)
-aligned_params = align_obj.transform()  # this returns np arrays
 
-randperm = align_obj.perm_spec.get_random_permutation(params_b)
-randperm_params = align_obj.perm_spec.apply_permutation(params_b, randperm)
-known_perm, known_align_loss = align_obj.fit(params_b, randperm_params)
-known_aligned_params = align_obj.transform()
+def align(x, y):
+    align_obj = WeightAlignment(
+                perm_spec,
+                kernel=args.kernel,
+                init_perm=None,
+                max_iter=100,
+                seed=args.seed,
+                order="random",
+                verbose=False)
+    p, similarities = align_obj.fit(x, y)
+    aligned, _ = align_obj.transform()  # this returns np arrays
+    stats = align_obj.summarize_last_similarities()
+    return p, similarities, aligned, stats
+
+perm, align_loss, aligned_params, align_stats = align(params_a, params_b)
+randperm = perm_spec.get_random_permutation(params_b)
+randperm_params = perm_spec.apply_permutation(params_b, randperm)
+known_perm, known_align_loss, known_aligned_params, known_align_stats = align(params_b, randperm_params)
+
+
+if args.save_all_similarities:
+    sim_stats = {
+        "align_loss": align_loss,
+        "known_align_loss": known_align_loss,
+    }
+else:
+    sim_stats = {
+        "align_stats": align_stats,
+        "known_align_stats": known_align_stats,
+    }
+
 
 def barrier(a, b, is_train=False):
     return get_barrier_stats(model, train_dataloader if is_train else test_dataloader,
-        a, b, # mask_a, mask_b,
-        resolution=args.barrier_resolution, reduction="mean", device=args.device)
+        a, b, resolution=args.barrier_resolution, reduction="mean", device=device())
+
 
 stats = {
     "args": vars(args),
     "hparams": hparams,
-    "randperm": randperm,
-    "perm": perm,
-    "align_loss": align_loss,
+    "randperm": dict(randperm),
+    "perm": dict(perm),
     "train_control": barrier(params_a, params_b, True),
     "test_control": barrier(params_a, params_b, False),
     "train_randperm": barrier(params_a, randperm_params, True),
@@ -64,12 +79,11 @@ stats = {
     "train_aligned": barrier(params_a, aligned_params, True),
     "test_aligned": barrier(params_a, aligned_params, False),
     "known_perm": known_perm,
-    "known_align_loss": known_align_loss,
     "train_known_control": barrier(params_b, randperm_params, True),
     "test_known_control": barrier(params_b, randperm_params, False),
     "train_known_aligned": barrier(params_b, known_aligned_params, True),
     "test_known_aligned": barrier(params_b, known_aligned_params, False),
 }
 args.save_file.parent.mkdir(parents=True, exist_ok=True)
-torch.save(stats, args.save_file)
+torch.save({**stats, **sim_stats}, args.save_file)
 print(f"Saved to {args.save_file}")

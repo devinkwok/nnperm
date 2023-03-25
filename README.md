@@ -3,7 +3,7 @@
 
 ## Requirements
 
-Requires `repsim` for kernels. Uses `open_lth` to train models.
+Uses `open_lth` to train and run models.
 Install requirements using `pip install -r requirements.txt`.
 
 
