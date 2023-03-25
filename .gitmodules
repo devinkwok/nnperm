@@ -1,3 +1,4 @@
 [submodule "open_lth"]
 	path = open_lth
 	url = https://github.com/devinkwok/open_lth/
+	branch = main
