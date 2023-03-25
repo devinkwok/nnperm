@@ -7,7 +7,7 @@
 #SBATCH --output=align-all-%j.out
 #SBATCH --error=align-all-%j.err
 
-source ./open_lth/slurm-setup.sh
+source ./open_lth/slurm-setup.sh cifar10
 
 # CKPT_ROOT=$HOME/
 CKPT_ROOT=$HOME/scratch/open_lth_data/

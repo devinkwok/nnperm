@@ -4,7 +4,8 @@
 ## Requirements
 
 Uses `open_lth` to train and run models.
-Install requirements using `pip install -r requirements.txt`.
+Clone repository and run `git submodule add https://github.com/devinkwok/open_lth`.
+Install requirements using `pip install -r requirements.txt` (if using slurm scripts, this is done automatically).
 
 
 ## Usage
