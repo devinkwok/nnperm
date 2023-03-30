@@ -38,45 +38,16 @@ class TestNNPerm(unittest.TestCase):
                     nn.ReLU(),
                     nn.Linear(5, 2),
                 ),
-                self._make_dataloader(torch.randn([10, 20])),
+                self._make_dataloader(torch.randn([16, 20])),
             ),
-            # (
-            #     nn.Sequential(
-            #         nn.Conv2d(3, 10, 3),
-            #         nn.BatchNorm2d(10),
-            #         nn.ReLU(),
-            #         nn.Conv2d(10, 5, 3),
-            #         nn.BatchNorm2d(5),
-            #         nn.ReLU(),
-            #         nn.AdaptiveMaxPool2d([1, 1]),
-            #         nn.Flatten(start_dim=1),
-            #         nn.Linear(5, 2),
-            #     ),
-            #     self._make_dataloader(torch.randn([10, 3, 9, 9])),
-            # ),
-            # (
-            #     nn.Sequential(
-            #         cifar_vgg.Model.ConvModule(3, 64, batchnorm_type=None),
-            #         cifar_vgg.Model.ConvModule(64, 128, batchnorm_type=None),
-            #     ),
-            #     self._make_dataloader(torch.randn([10, 3, 32, 32])),
-            # ),
-            # (
-            #     nn.Sequential(
-            #         nn.Conv2d(3, 10, 3),
-            #         cifar_resnet.Model.Block(10, 5, downsample=True)
-            #     ),
-            #     self._make_dataloader(torch.randn([10, 3, 32, 32])),
-            # ),
-            # following models take longer to run
             (
                 cifar_vgg.Model.get_model_from_name("cifar_vgg_11", initializer=kaiming_normal),
-                self._make_dataloader(torch.randn([10, 3, 32, 32])),
+                self._make_dataloader(torch.randn([16, 3, 32, 32])),
             ),
             (
                 cifar_resnet.Model.get_model_from_name(
-                      "cifar_resnet_14_4", initializer=kaiming_normal),
-                self._make_dataloader(torch.randn([10, 3, 32, 32])),
+                      "cifar_resnet_20_4", initializer=kaiming_normal),
+                self._make_dataloader(torch.randn([16, 3, 32, 32])),
             ),
         ]
         for model, _ in self.models:
@@ -196,19 +167,31 @@ class TestNNPerm(unittest.TestCase):
                         perm = make_perm_fn(state_dict)
                         self._validate_perm_align(model, data, perm_spec, perm, align_obj, noise_std=weight_noise)
 
-    # def test_bootstrap(self):
-    #     for model, data in self.sequential_models:
-    #         state_dict = model.state_dict()
-    #         perm_spec = self._get_perm_spec(state_dict)
-    #         for loss, order, make_perm_fn in product(
-    #             ["mse", "dot"], ["forward", "backward", "random"],
-    #             [perm_spec.get_identity_permutation, perm_spec.get_random_permutation],
-    #         ):
-    #             with self.subTest(model=model, loss=loss, order=order, perm_fn=make_perm_fn):
-    #                 align_obj = WeightAlignment(perm_spec, loss, bootstrap=1000, order=order)
-    #                 perm = make_perm_fn(state_dict)
-    #                 self._validate_perm_align(model, data, perm_spec, perm, align_obj,
-    #                                         allowed_error_rate=0.1, allowed_loss=1e18)
+    def test_activation_align(self):
+        for model, data in self.models:
+            state_dict = model.state_dict()
+            perm_spec = self._get_perm_spec(state_dict)
+            for weight_noise, kernel, intermediate_type, make_perm_fn in product(
+                [0., 1e-8], ["linear", "cosine"], ["first", "all", "last"], [perm_spec.get_random_permutation],
+            ):
+                with self.subTest(model=model, weight_noise=weight_noise, intermediate_type=intermediate_type, kernel=kernel, perm_fn=make_perm_fn):
+                    align_obj = ActivationAlignment(perm_spec, model, data, kernel=kernel, device="cpu")
+                    perm = make_perm_fn(state_dict)
+                    self._validate_perm_align(model, data, perm_spec, perm, align_obj, noise_std=weight_noise)
+
+    def test_bootstrap(self):
+        for model, data in self.models:
+            state_dict = model.state_dict()
+            perm_spec = self._get_perm_spec(state_dict)
+            for kernel, order, make_perm_fn in product(
+                ["linear_bootstrap_1000"], ["random"],
+                [ perm_spec.get_random_permutation],
+            ):
+                with self.subTest(model=model, kernel=kernel, order=order, perm_fn=make_perm_fn):
+                    align_obj = WeightAlignment(perm_spec, kernel=kernel, order=order)
+                    perm = make_perm_fn(state_dict)
+                    self._validate_perm_align(model, data, perm_spec, perm, align_obj,
+                                            allowed_errors=10, allowed_loss=1e18)
 
     class TestModel(nn.Module):
         def __init__(self, n_in, n_h1, n_h2, n_out):
@@ -310,7 +293,7 @@ class TestNNPerm(unittest.TestCase):
 
     def test_align_embed_submodel(self):
         dataloader = self.models[0][1]
-        for sparsity in [0.5, 0.25]:
+        for sparsity in [1, 0.5, 0.25, 0]:
             with self.subTest(sparsity=sparsity):
                 wide, narrow = self._make_submodel(20, 2, 20, 16, sparsity=sparsity)
                 wide_dict = wide.state_dict()
