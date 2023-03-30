@@ -26,7 +26,7 @@ def bootstrap_kernel(a: np.ndarray, b: np.ndarray,
 
 
 def get_kernel_from_name(name: str, seed=None):
-    if "linear" in name:  # hack: change to use torch tensors instead of np.ndarray
+    if "linear" in name:
         kernel_fn = linear_kernel
     elif "cosine" in name:
         kernel_fn = cosine_kernel
@@ -35,6 +35,6 @@ def get_kernel_from_name(name: str, seed=None):
 
     if "bootstrap" in name:
         n_bootstrap = [int(x) for x in name.split("_") if x.isdigit()][0]
-        kernel_fn = lambda x, y: bootstrap_kernel(
+        bootstrap_fn = lambda x, y: bootstrap_kernel(
             x, y, kernel_fn, n_bootstrap, np.random.RandomState(seed))
-    return kernel_fn
+    return bootstrap_fn

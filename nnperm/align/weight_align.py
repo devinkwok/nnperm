@@ -5,13 +5,12 @@ from tqdm import tqdm
 import numpy as np
 from scipy.optimize import linear_sum_assignment
 
-from nnperm.perm import PermutationSpec, perm_compose, perm_inverse
+from nnperm.perm import PermutationSpec, perm_compose
 from nnperm.utils import keys_match, to_numpy
 from nnperm.kernel import get_kernel_from_name
 
 
 class WeightAlignment:
-    #TODO ensure that calling fit resets all computed params_ in object
     def __init__(self,
             perm_spec: PermutationSpec,
             kernel: Union[str, callable]="linear",
@@ -21,6 +20,7 @@ class WeightAlignment:
             order: Union[str, List[List[int]]]="random",
             verbose: bool=False,
             align_bias: bool=True,
+            epsilon: float=1e-12,
     ):
         self.perm_spec = perm_spec
         self.kernel = kernel
@@ -31,6 +31,7 @@ class WeightAlignment:
         self.random_state = np.random.RandomState(seed)
         self.order = order
         self.align_bias = align_bias
+        self.epsilon = epsilon
         if isinstance(self.kernel, str):
             self.kernel_fn = get_kernel_from_name(self.kernel, self.seed)
         else:
@@ -50,80 +51,61 @@ class WeightAlignment:
                 assert len(x) == len(perm_names), self.order
             return self.order
 
-    def _linear_sum_assignment(self, gram_matrix, perm_name):
-        s_row, s_col = linear_sum_assignment(gram_matrix, maximize=True)
-        assert np.all(s_row == np.arange(gram_matrix.shape[0]))
-        gram_matrix = gram_matrix[:, s_col]
-        return s_col, gram_matrix
-
-    def _prep_params(self, params_a, params_b, require_same_size=True):
-        params_a = to_numpy(params_a)
-        params_b = deepcopy(to_numpy(params_b))
-        self.params_ = params_b
-        self.sizes_a_ = self.perm_spec.get_sizes(params_a)
-        self.sizes_b_ = self.perm_spec.get_sizes(params_b)
-        assert keys_match(self.sizes_a_, self.sizes_b_)
-        if require_same_size:
-            assert np.all([self.sizes_a_[k] == self.sizes_b_[k] for k in self.sizes_a_.keys()])
-            return params_a, params_b, self.sizes_a_
-        else:
-            return params_a, params_b, self.sizes_a_, self.sizes_b_
-
-    def _get_permuted_param(self, k, params, except_axis=None):
-        """Get parameter `k` from `params`, with the permutations applied."""
-        w = params[k]
-        for axis, p in enumerate(self.perm_spec.axes_to_perm[k]):
-            # Skip the axis we're trying to permute.
-            if axis == except_axis:
-                continue
-            # None indicates that there is no permutation relevant to that axis.
-            if p is not None and p in self.perms_:
-                w = PermutationSpec.permute_layer(self.perms_[p], w, axis)
-        return w
-
-    def fit(self, params_a: Dict[str, np.ndarray], params_b: Dict[str, np.ndarray]):
-        """Find a permutation of `params_b` to make them match `params_a`."""
-        params_a, params_b, sizes = self._prep_params(params_a, params_b)
+    def _init_fit(self, params_a, params_b):
+        # check parameter sizes
+        sizes_a = self.perm_spec.get_sizes(params_a)
+        sizes_b = self.perm_spec.get_sizes(params_b)
+        assert keys_match(sizes_a, sizes_b)
+        assert np.all([sizes_a[k] == sizes_b[k] for k in sizes_a.keys()])
+        # initialize variables
+        self.similarity_ = defaultdict(list)
+        self.params_a_ = to_numpy(params_a)
+        self.params_b_ = to_numpy(params_b)
+        self.params_ = deepcopy(self.params_b_)  # permuted params
         if self.init_perm is None:
-            self.perms_ = self.perm_spec.get_identity_permutation(params_a)
+            self.perms_ = self.perm_spec.get_identity_permutation(self.params_a_)
         else:
             self.perms_ = deepcopy(self.init_perm)
-        self.similarity_ = defaultdict(list)
-        # find best permutation based on random order of solving them
-        for perm_names in tqdm(self._alignment_order()[:self.max_iter]):
-            early_stop = True
-            for i, p in enumerate(perm_names):
-                n = sizes[p]
-                gram_matrix = np.zeros((n, n))
-                # add similarities for every param that has same perm
-                for layer_name, axis in self.perm_spec.perm_to_axes[p]:
-                    if "bias" in layer_name and not self.align_bias:
-                        continue  #TODO temp hack to stop NaNs
-                    w_a = params_a[layer_name]
-                    # w_b = self.params_[layer_name]
-                    w_b = self._get_permuted_param(layer_name, params_b, except_axis=axis)
-                    w_a = np.moveaxis(w_a, axis, 0).reshape((n, -1))
-                    w_b = np.moveaxis(w_b, axis, 0).reshape((n, -1))
-                    output = self.kernel_fn(w_a, w_b)
-                    if np.any(np.isnan(output)):
-                        print(f"NaNs found after kernel operation: {layer_name} {params_a[layer_name].shape}, {axis}")
-                        import pdb
-                        pdb.set_trace()
-                    gram_matrix += output
-                new_perm, similarity = self._linear_sum_assignment(gram_matrix, p)
-                sim_diff = np.trace(similarity) - np.trace(self.similarity_[p][-1]) if len(self.similarity_[p]) > 0 else np.trace(similarity) 
-                if self.verbose:
-                    print(f"{i}/{p}: {sim_diff}")
-                if sim_diff > 1e-12:
-                    early_stop = False
-                self.perms_[p] = new_perm
-                # self.perms_[p] = perm_compose(new_perm, self.perms_[p])
-                # apply new permutation
-                # for layer_name, axis in self.perm_spec.perm_to_axes[p]:
-                #     self.params_[layer_name] = PermutationSpec.permute_layer(new_perm, self.params_[layer_name], axis)
-                self.similarity_[p].append(similarity)
-            if early_stop:
-                break
+
+    def _get_gram_matrix(self, perm_key):
+        n = len(self.perms_[perm_key])
+        gram_matrix = np.zeros((n, n))
+        # add similarities for every param that has same perm
+        for layer_name, axis in self.perm_spec.perm_to_axes[perm_key]:
+            if "bias" in layer_name and not self.align_bias:
+                continue
+            w_a = self.params_a_[layer_name]
+            w_b = self.params_[layer_name]
+            w_a = np.moveaxis(w_a, axis, 0).reshape((n, -1))
+            w_b = np.moveaxis(w_b, axis, 0).reshape((n, -1))
+            output = self.kernel_fn(w_a, w_b)
+            gram_matrix += output
+        return gram_matrix
+
+    def _update_permutations(self, perm_key, new_p, similarity):
+        self.params_ = self.perm_spec.apply_permutation(self.params_, {perm_key: new_p})
+        self.perms_[perm_key] = perm_compose(self.perms_[perm_key], new_p)
+        # permute similarity matrix so that max is on diagonal
+        similarity = PermutationSpec.permute_layer(new_p, similarity, 1)
+        return similarity
+
+    def fit(self, params_a: Dict[str, np.ndarray], params_b: Dict[str, np.ndarray]):
+        # depends on _init_fit, _get_gram_matrix, _update_permutations
+        self._init_fit(params_a, params_b)
+        last_sim = 0
+        for order in tqdm(self._alignment_order()[:self.max_iter]):
+            total_sim = 0
+            for perm_key in order:
+                similarity = self._get_gram_matrix(perm_key)
+                _, new_p = linear_sum_assignment(similarity, maximize=True)
+                similarity = self._update_permutations(perm_key, new_p, similarity)
+                # track total and per layer similarity
+                self.similarity_[perm_key].append(similarity)
+                score = np.trace(similarity)
+                total_sim += score
+            if total_sim - last_sim <  self.epsilon:
+                break  # stop if similarity is not increasing
+            last_sim = total_sim
         return self.perms_, self.similarity_
 
     def _get_align_mask(self):  # this will change for partial weight permutation

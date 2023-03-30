@@ -215,7 +215,7 @@ class PermutationSpec:
     def layer_size(params: List[Tuple[np.ndarray, int]]):
         size = params[0][0].shape[params[0][1]]
         for layer, dim in params:
-            assert layer.shape[dim] == size, layer.shape
+            assert layer.shape[dim] == size, (layer.shape, dim, size)
         return size
 
     def get_sizes(self, state_dict: Dict[str, np.ndarray]):
