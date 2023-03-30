@@ -37,4 +37,6 @@ def get_kernel_from_name(name: str, seed=None):
         n_bootstrap = [int(x) for x in name.split("_") if x.isdigit()][0]
         bootstrap_fn = lambda x, y: bootstrap_kernel(
             x, y, kernel_fn, n_bootstrap, np.random.RandomState(seed))
-    return bootstrap_fn
+        return bootstrap_fn
+
+    return kernel_fn

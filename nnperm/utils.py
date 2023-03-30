@@ -18,8 +18,8 @@ def get_open_lth_ckpt(ckpt_path):
 
 
 def get_open_lth_data(dataset_hparams, n_train, n_test, batch_size=5000):
-    train_dataloader = get_dataloader(dataset_hparams, n_train, batch_size)
-    test_dataloader = get_dataloader(dataset_hparams, n_test, batch_size)
+    train_dataloader = get_dataloader(dataset_hparams, n_train, train=True, batch_size=batch_size)
+    test_dataloader = get_dataloader(dataset_hparams, n_test, train=False, batch_size=batch_size)
     return train_dataloader, test_dataloader
 
 

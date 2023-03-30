@@ -74,7 +74,7 @@ def evaluate_intermediates(
 ):
     if named_modules is None:
         named_modules = model.named_modules()
-    if verbose: print(model, intermediates.get_module_names(), sep="\n")
+    if verbose: print(model, named_modules, sep="\n")
     model.to(device=device)
     model.eval()
     intermediates = SaveIntermediateHook(
