@@ -95,7 +95,7 @@ class WeightAlignment:
         last_sim = 0
         for order in tqdm(self._alignment_order()[:self.max_iter]):
             total_sim = 0
-            for perm_key in order:
+            for i, perm_key in enumerate(order):
                 similarity = self._get_gram_matrix(perm_key)
                 _, new_p = linear_sum_assignment(similarity, maximize=True)
                 similarity = self._update_permutations(perm_key, new_p, similarity)
@@ -103,6 +103,8 @@ class WeightAlignment:
                 self.similarity_[perm_key].append(similarity)
                 score = np.trace(similarity)
                 total_sim += score
+                if self.verbose:
+                    print(f"{i}/{perm_key}: {score} ({total_sim})")
             if total_sim - last_sim <  self.epsilon:
                 break  # stop if similarity is not increasing
             last_sim = total_sim

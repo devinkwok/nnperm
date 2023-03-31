@@ -22,6 +22,7 @@ parser.add_argument('--barrier_resolution', default=25, type=int)
 parser.add_argument('--n_train', default=None, type=int)
 parser.add_argument('--n_test', default=None, type=int)
 parser.add_argument('--seed', default=42, type=int)
+parser.add_argument('--type', default="", type=str)
 parser.add_argument('--kernel', default="linear", type=str)
 args = parser.parse_args()
 
@@ -47,7 +48,7 @@ def all_barriers(perms, perm_type):
         for ckpt_iter in train_ep_it:
             file_a = args.repdir_a / f"level_{level}" / "main" / f"model_{ckpt_iter}.pth"
             file_b = args.repdir_b / f"level_{level}" / "main" / f"model_{ckpt_iter}.pth"
-            print(f"Computing error barrier for {file_a}, {file_b}")
+            print(f"Computing error barrier for {file_a}, {file_b} using {perm_file}")
             _, _, params_a = get_open_lth_ckpt(file_a)
             _, _, params_b = get_open_lth_ckpt(file_b)
             if perm_file is not None:
@@ -60,8 +61,9 @@ def all_barriers(perms, perm_type):
 
 source_root = args.repdir_b.parent
 target_root = args.repdir_a.parent
-dense_perm = source_root / args.repdir_b.stem / "level_0" / "main" / f"perm-{args.kernel}-to-{target_root.stem}-{args.repdir_a.stem}-level_0-main.pt"
-sparse_perms = [source_root / args.repdir_b.stem / f"level_{i}" / "main" / f"perm-{args.kernel}-to-{target_root.stem}-{args.repdir_a.stem}-level_{i}-main.pt" for i in levels]
+filename = "-".join([args.type, args.kernel, target_root.stem, args.repdir_a.stem])
+dense_perm = source_root / args.repdir_b.stem / "level_0" / "main" / f"perm{filename}-level_0-main.pt"
+sparse_perms = [source_root / args.repdir_b.stem / f"level_{i}" / "main" / f"perm{filename}-level_{i}-main.pt" for i in levels]
 
 stats_dict = {
     **all_barriers([None] * len(levels), "noperm"),

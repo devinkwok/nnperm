@@ -33,7 +33,7 @@ class ActivationAlignment(WeightAlignment):
         # for each permutation, get all intermediate outputs that output to this permutation
         model = deepcopy(self.model)
         model.load_state_dict(to_torch_device(params, device=self.device))
-        hidden_batches = evaluate_intermediates(model, self.dataloader, self.device, exclude=self.exclude)
+        hidden_batches = evaluate_intermediates(model, self.dataloader, self.device, exclude=self.exclude, verbose=self.verbose)
         for batch in hidden_batches:
             perm_to_hidden = defaultdict(list)
             for k, v in batch.items():
