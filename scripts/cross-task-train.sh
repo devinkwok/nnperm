@@ -9,10 +9,11 @@
 
 # hparams
 MODEL=(cifar_vgg_16 cifar_resnet_20_64)
-DATASET=(cifar10 cifar100class10 pixelpermutedcifar10 svhn eurosat)
+# DATASET=(cifar10 cifar100class10 pixelpermutedcifar10 svhn eurosat)
+DATASET=(cifar10 svhn cifar100)
 REPLICATE=(1 2 3 4)
 
-source ./open_lth/slurm-setup.sh cifar10 cifar100 svhn eurosat
+source ./open_lth/slurm-setup.sh cifar10 cifar100 svhn
 cd open_lth
 
 parallel --delay=15 --linebuffer --jobs=3  \
@@ -21,7 +22,7 @@ parallel --delay=15 --linebuffer --jobs=3  \
         --dataset_name={2}  \
         --replicate={3}  \
         --warmup_steps="1ep"  \
-        --rewinding_steps=5ep  \
+        --rewinding_steps=1ep  \
         --batchnorm_replace="layernorm"  \
         --levels=20  \
   ::: ${MODEL[@]}  \
