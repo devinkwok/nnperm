@@ -104,12 +104,24 @@ class PermutationSpec:
                     perm_to_axes[perm].append((wk, axis))
         return dict(perm_to_axes)
 
-    def subset_perm(self, include_perms: List = None, exclude_perms: List = None):
-        axes_to_perm = self.axes_to_perm
+    def subset_perm(self, include_perms: List = None, exclude_perms: List = None, include_axes: List = None, exclude_axes: List = None):
+        axes_to_perm = {}
+        remove_axes = set()
+        for k, v in self.axes_to_perm.items():
+            if is_valid_key(k, include_axes, exclude_axes):
+                layers = []
+                for dim in v:
+                    if dim is not None and is_valid_key(dim, include_perms, exclude_perms):
+                        layers.append(dim)
+                    else:
+                        layers.append(None)
+                axes_to_perm[k] = tuple(layers)
+            else:
+                remove_axes.add(k)
         perm_to_axes = {}
         for k, v in self.perm_to_axes.items():
             if is_valid_key(k, include_perms, exclude_perms):
-                perm_to_axes[k] = v
+                perm_to_axes[k] = [(layer, dim) for layer, dim in v if layer not in remove_axes]
         return PermutationSpec(axes_to_perm, perm_to_axes)
 
     def get_perm_mask(self):
