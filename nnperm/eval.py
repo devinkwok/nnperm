@@ -7,7 +7,13 @@ import torch.nn as nn
 
 
 def is_identity(x: torch.tensor, y: torch.tensor):
-    return len(x.flatten()) == len(y.flatten()) and torch.all(x.flatten() == y.flatten())
+    if len(x.flatten()) != len(y.flatten()):
+        return False
+    if len(x.shape) > 2:  # open_lth layernorm moves output dim to end
+        x_1 = torch.moveaxis(x, 1, -1)
+        if torch.all(x_1.flatten() == y.flatten()):
+            return True
+    return torch.all(x.flatten() == y.flatten())
 
 
 def match_key(key: str, include: List[str] = None, exclude: List[str] = None):
