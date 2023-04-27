@@ -70,7 +70,6 @@ def evaluate_intermediates(
         include: List[str]=None,
         exclude: List[str]=None,
         verbose=False,
-        callbacks={},
 ):
     if named_modules is None:
         named_modules = list(model.named_modules())
@@ -85,59 +84,25 @@ def evaluate_intermediates(
                 if verbose: print(f"...batch {i}")
                 batch_examples = batch_examples.to(device=device)
                 labels = labels.to(device=device)
-                _ = model(batch_examples)
-                # add callback values to intermediates
-                for k, v in callbacks.items():
-                    hidden[k] = v(batch_examples, labels, hidden)
-                yield hidden
+                output = model(batch_examples)
+                yield batch_examples, hidden, output, labels
 
 
-class AccuracyCallback():
-    def __init__(self, output_layer_name: str) -> None:
-        self.output_layer_name = output_layer_name
-    
-    def __call__(self, batch_examples, labels, hidden) -> torch.tensor:
-        return torch.argmax(hidden[self.output_layer_name], dim=-1) == labels
-
-
-class LossCallback():
-    def __init__(self, output_layer_name: str, loss_function: callable) -> None:
-        self.output_layer_name = output_layer_name
-        self.loss_function = loss_function
-    
-    def __call__(self, batch_examples, labels, hidden) -> torch.tensor:
-        return self.loss_function(hidden[self.output_layer_name], labels)
-
-
-def stack_intermediates(iterable):
-    outputs = defaultdict(list)
-    for hidden in iterable:
-        for k, v in hidden.items():
-            outputs[k].append(v.detach().cpu().numpy())
-    outputs = {k: np.concatenate(v) for k, v in outputs.items()}
-    return outputs
-
-
-def evaluate_model(model, dataloader, state_dict=None, device="cuda", loss_fn=None, return_accuracy=False):
+def evaluate_model(model, dataloader, state_dict=None, device="cuda", return_accuracy=False, loss_fn=None):
     if state_dict is not None:
         model = deepcopy(model)
         model.load_state_dict(state_dict)
-    modules = model.named_modules()
-    (first_name, first_layer), *_ = modules  # the first module contains all others
-    named_modules = [(first_name, first_layer)]
-    output_name = first_name + ".out"  # only get the output of the containing module
-    callbacks = {}
-    if loss_fn is not None:
-        callbacks["loss"] = LossCallback(output_name, loss_fn)
-    if return_accuracy:
-        callbacks["accuracy"] = AccuracyCallback(output_name)
     eval_iterator = evaluate_intermediates(
-        model, dataloader, device, named_modules=named_modules, include=[output_name], callbacks=callbacks)
-    y = stack_intermediates(eval_iterator)
-    if len(y) == 1:
-        return y[output_name]
-    # rename last layer to "output"
-    outputs = y[output_name]
-    del y[output_name]
-    y["output"] = outputs
-    return y
+        model, dataloader, device, named_modules=[])
+    all_outputs, all_acc, all_loss = [], [], []
+    for _, _, outputs, labels in eval_iterator:
+        acc = torch.argmax(outputs, dim=-1) == labels
+        all_outputs.append(outputs.detach().cpu().numpy())
+        all_acc.append(acc.detach().cpu().numpy())
+        if loss_fn is not None:
+            loss = loss_fn(outputs, labels)
+            all_loss.append(loss.detach().cpu().numpy())
+    all_loss = None if loss_fn is None else np.concatenate(all_loss)
+    if return_accuracy or loss_fn is not None:
+        return all_outputs, np.concatenate(all_acc), all_loss
+    return all_outputs

@@ -7,7 +7,7 @@ from scipy.optimize import linear_sum_assignment
 
 from nnperm.perm import PermutationSpec, perm_compose
 from nnperm.utils import keys_match, to_numpy
-from nnperm.kernel import get_kernel_from_name
+from nnperm.align.kernel import get_kernel_from_name
 
 
 class WeightAlignment:
@@ -117,7 +117,7 @@ class WeightAlignment:
         if self.perms_ is None:
             raise ValueError("Permutation not generated yet.")
         if params is None:
-            params = self.params_
+            params = self.params_b_  # params_ is already transformed, params_b_ is not
         permuted_params = self.perm_spec.apply_permutation(to_numpy(params), self.perms_)
         self.align_mask_ = self._get_align_mask()
         return permuted_params, self.align_mask_
@@ -147,7 +147,7 @@ class WeightAlignment:
                 "median": median,
                 "high_quartile": high_quartile,
                 "max": max,
-                "id_similarity": np.mean(v[np.arange(len(v)), np.arange(len(v))]),
-                "perm_similarity": np.mean(v[np.arange(len(v)), self.perms_[k]]),
+                "mean_similarity": np.mean(v),
+                "perm_similarity": np.mean(np.diag(v)),
             })
         return sim_stats

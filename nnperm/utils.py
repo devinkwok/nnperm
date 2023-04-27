@@ -13,8 +13,8 @@ def device():
     return get_device()
 
 
-def get_open_lth_ckpt(ckpt_path):
-    return get_ckpt(ckpt_path)
+def get_open_lth_ckpt(*args, **kwargs):
+    return get_ckpt(*args, **kwargs)
 
 
 def get_open_lth_data(dataset_hparams, n_train, n_test, batch_size=5000):

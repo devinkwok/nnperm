@@ -1,17 +1,28 @@
 import torch
 import numpy as np
 
-from sklearn.metrics.pairwise import cosine_similarity
+from sklearn.metrics.pairwise import cosine_similarity, euclidean_distances
 
 
 def linear_kernel(x, y):
-    x = torch.tensor(x).to(dtype=torch.float).contiguous()
-    y = torch.tensor(y).to(dtype=torch.float).contiguous()
-    return torch.einsum("n...,m...->nm", x, y).numpy()
+    x = x.reshape(x.shape[0], -1)
+    y = y.reshape(y.shape[0], -1)
+    return x @ y.T
 
 
 def cosine_kernel(x, y):
+    x = x.reshape(x.shape[0], -1)
+    y = y.reshape(y.shape[0], -1)
     return cosine_similarity(x, y)
+
+
+def loglinear_kernel(x, y):
+    x = x.reshape(x.shape[0], -1)
+    y = y.reshape(y.shape[0], -1)
+    distance = 2 * np.log(np.maximum(euclidean_distances(x, y), 1e-16))
+    sanity_check = np.sum(np.log(np.maximum((np.linalg.norm(x - y, axis=1))**2, 1e-16)))
+    assert abs(np.trace(distance) - sanity_check) < 1e-8, (np.trace(distance), sanity_check)
+    return -distance
 
 
 def bootstrap_kernel(a: np.ndarray, b: np.ndarray,
@@ -30,6 +41,8 @@ def get_kernel_from_name(name: str, seed=None):
         kernel_fn = linear_kernel
     elif "cosine" in name:
         kernel_fn = cosine_kernel
+    elif "loglinear" in name:
+        kernel_fn = loglinear_kernel
     else:
         raise ValueError(f"Unrecognized name for kernel: {name}")
 

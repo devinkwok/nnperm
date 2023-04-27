@@ -99,9 +99,9 @@ def get_barrier_stats(
     eval_loss, acc = [], []
     for alpha in tqdm(interpolation):
         combined = interpolate_dict(params_a, params_b, alpha)
-        outputs = evaluate_model(model, dataloader, state_dict=combined, device=device, loss_fn=loss_fn, return_accuracy=True)
-        eval_loss.append(outputs["loss"])
-        acc.append(outputs["accuracy"])
+        _, accuracy, loss = evaluate_model(model, dataloader, state_dict=combined, device=device, loss_fn=loss_fn, return_accuracy=True)
+        eval_loss.append(loss)
+        acc.append(accuracy)
     eval_loss = np.stack(eval_loss, axis=0)
     acc = np.stack(acc, axis=0)
     return {
