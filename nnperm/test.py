@@ -6,7 +6,6 @@ import torch
 import numpy as np
 import torch
 from torch import nn
-from nnperm.utils import multiplicative_weight_noise
 
 import sys
 sys.path.append("open_lth")
@@ -17,8 +16,8 @@ from open_lth.models.initializers import kaiming_normal
 from nnperm.perm import PermutationSpec
 from nnperm.align import *
 from nnperm.eval import evaluate_model
-from nnperm.error import EnsembleModel, interpolate_dict
-from nnperm.utils import to_torch_device, keys_match
+from nnperm.barrier import EnsembleModel, interpolate_dict
+from nnperm.utils import to_torch_device, keys_match, multiplicative_weight_noise, to_numpy
 
 
 class TestNNPerm(unittest.TestCase):
@@ -91,7 +90,10 @@ class TestNNPerm(unittest.TestCase):
             assert np.all([k in self.original for k in self.state.keys()])
             assert np.all([k in self.state for k in self.original.keys()])
             for k, v in self.state.items():
-                assert torch.equal(self.original[k], v)
+                if isinstance(v, torch.Tensor):
+                    assert torch.equal(self.original[k], v)
+                else:
+                    assert np.all(self.original[k] == v)
 
     def _validate_symmetry(self, model, data, transform_fn):
         output = evaluate_model(model, data, device="cpu")
@@ -152,6 +154,47 @@ class TestNNPerm(unittest.TestCase):
             for x in identity.values():
                 np.testing.assert_array_equal(x, np.eye(len(x)))
 
+    def test_subset_perm(self):
+        for model, data in self.models:
+            state_dict = model.state_dict()
+            perm_spec = self._get_perm_spec(state_dict)
+            ps2 = perm_spec.subset_perm()
+            self.assertDictEqual(perm_spec.axes_to_perm, ps2.axes_to_perm)
+            self.assertDictEqual(perm_spec.perm_to_axes, ps2.perm_to_axes)
+
+            one_perm = list(perm_spec.perm_to_axes.keys())[0:1]
+            ps2 = perm_spec.subset_perm(include_perms=one_perm)
+            self.assertListEqual(list(ps2.perm_to_axes.keys()), one_perm)
+            for v in ps2.axes_to_perm.values():
+                for k in v:
+                    self.assertTrue(k is None or k == one_perm[0])
+
+            one_layer = list(perm_spec.axes_to_perm.keys())[0:1]
+            ps2 = perm_spec.subset_perm(include_axes=one_layer)
+            self.assertListEqual(list(ps2.axes_to_perm.keys()), one_layer)
+            for v in ps2.perm_to_axes.values():
+                for k, i in v:
+                    self.assertEqual(k, one_layer[0])
+
+    def test_fit_transform(self):
+        for model, _ in self.models:
+            state_dict = model.state_dict()
+            perm_spec = self._get_perm_spec(state_dict)
+            target_params = perm_spec.apply_rand_perm(state_dict)
+            perm_params = []
+            with self.StateUnchangedContextManager(target_params):
+                align_obj = WeightAlignment(perm_spec, kernel="linear")
+                perm_params.append(align_obj.fit_transform(target_params, state_dict)[0])
+                align_obj.fit(target_params, state_dict)
+                perm_params.append(align_obj.transform()[0])
+                perm_params.append(align_obj.fit_transform(target_params, state_dict)[0])
+                align_obj.fit(target_params, state_dict)
+                perm_params.append(align_obj.transform()[0])
+                perm_params.append(align_obj.params_)
+            for param in perm_params:
+                for k, v in target_params.items():
+                    np.testing.assert_array_equal(v, param[k])
+
     def test_align(self):
         for seed in [100, 200]:
             self.setUp()
@@ -159,13 +202,39 @@ class TestNNPerm(unittest.TestCase):
                 state_dict = model.state_dict()
                 perm_spec = self._get_perm_spec(state_dict)
                 for weight_noise, kernel, order, make_perm_fn in product(
-                    [0., 1e-1], ["linear", "cosine"], ["forward", "backward", "random"],
+                    [0., 1e-1], ["linear", "cosine", "loglinear"], ["forward", "backward", "random"],
                     [perm_spec.get_random_permutation],
                 ):
                     with self.subTest(model=model, weight_noise=weight_noise, kernel=kernel, order=order, perm_fn=make_perm_fn):
                         align_obj = WeightAlignment(perm_spec, kernel=kernel, seed=seed, order=order)
                         perm = make_perm_fn(state_dict)
                         self._validate_perm_align(model, data, perm_spec, perm, align_obj, noise_std=weight_noise)
+
+    def test_partial_align(self):
+        # can align when ignoring layers that differ in size
+        params_a = self.models[0][0].state_dict()
+        params_b = {k: v for k, v in params_a.items()}
+        weight_k = list(params_a.keys())[-2]
+        bias_k = list(params_a.keys())[-1]
+        params_b[bias_k] = np.ones(17)
+        wider_shape = list(params_a[weight_k].shape)
+        wider_shape[0] = 17
+        params_b[weight_k] = np.ones(wider_shape)
+        perm_spec = self._get_perm_spec(params_a)
+        # should fail with original spec since the last layers differ in size
+        align_obj = WeightAlignment(perm_spec, kernel="linear")
+        self.assertRaises(ValueError, lambda: align_obj.fit(params_a, params_b))
+        # should succeed if the differing size layers are removed from perm_spec
+        subset_spec = perm_spec.subset_perm(exclude_axes=[weight_k, bias_k])
+        align_obj = WeightAlignment(subset_spec, kernel="linear")
+        align_obj.fit(perm_spec.apply_rand_perm(params_a), params_b)
+        mask = {k: np.random.randn(*v.shape) for k, v in params_a.items()}
+        permuted_mask, _ = align_obj.transform(mask)
+        for k in mask.keys():
+            if k == weight_k or k == bias_k:  # excluded layers should not be permuted
+                np.testing.assert_array_equal(mask[k], permuted_mask[k])
+            else:  # all other layers are permuted
+                self.assertTrue(np.any(mask[k] != permuted_mask[k]))
 
     def test_activation_align(self):
         for model, data in self.models:
@@ -175,7 +244,7 @@ class TestNNPerm(unittest.TestCase):
                 [0., 1e-8], ["linear", "cosine"], ["first", "all", "last"], [perm_spec.get_random_permutation],
             ):
                 with self.subTest(model=model, weight_noise=weight_noise, intermediate_type=intermediate_type, kernel=kernel, perm_fn=make_perm_fn):
-                    align_obj = ActivationAlignment(perm_spec, model, data, kernel=kernel, device="cpu")
+                    align_obj = ActivationAlignment(perm_spec, data, model, kernel=kernel, device="cpu")
                     perm = make_perm_fn(state_dict)
                     self._validate_perm_align(model, data, perm_spec, perm, align_obj, noise_std=weight_noise)
 
@@ -279,38 +348,81 @@ class TestNNPerm(unittest.TestCase):
         self.assertTrue(torch.all(interpolated["model_a.linear1.weight"] == params_interpolated["linear1.weight"]))
         self.assertTrue(torch.all(interpolated["model_b.linear1.weight"] == params_interpolated["linear1.weight"]))
 
-    def _make_submodel(self, n_in, n_out, h1, h2, sparsity=1.):
+    def _make_submodel(self, n_in, n_out, h1, h2, sparsity=1., scale_narrow_to_wide_weights=0.):
         wide = self.TestModel(n_in, h1, h2, n_out)
         s1 = int(h1 * sparsity)
         s2 = int(h2 * sparsity)
         narrow = self.TestModel(n_in, s1, s2, n_out)
-        narrow.linear1.weight = nn.Parameter(wide.linear1.weight[:s1, :])
-        narrow.linear1.bias = nn.Parameter(wide.linear1.bias[:s1])
-        narrow.linear2.weight = nn.Parameter(wide.linear2.weight[:s2, :s1])
-        narrow.linear2.bias = nn.Parameter(wide.linear2.bias[:s2])
-        narrow.linear3.weight = nn.Parameter(wide.linear3.weight[:, :s2])
+        narrow.linear1.weight.data = wide.linear1.weight[:s1, :]
+        narrow.linear1.bias.data = wide.linear1.bias[:s1]
+        narrow.linear2.weight.data = wide.linear2.weight[:s2, :s1]
+        narrow.linear2.bias.data = wide.linear2.bias[:s2]
+        narrow.linear3.weight.data = wide.linear3.weight[:, :s2]
         return wide, narrow
+
+    def test_embed_into_wider_network_symmetry(self):
+        narrow_wide_data = [
+            (
+                self.TestModel(20, 15, 10, 2),
+                self.TestModel(20, 30, 20, 2),
+                self._make_dataloader(torch.randn([100, 20])),
+            ),
+            (
+                cifar_vgg.Model.get_model_from_name("cifar_vgg_11_4", initializer=kaiming_normal),
+                cifar_vgg.Model.get_model_from_name("cifar_vgg_11_8", initializer=kaiming_normal),
+                self._make_dataloader(torch.randn([16, 3, 32, 32])),
+            ),
+            (
+                cifar_resnet.Model.get_model_from_name("cifar_resnet_20_4", initializer=kaiming_normal),
+                cifar_resnet.Model.get_model_from_name("cifar_resnet_20_8", initializer=kaiming_normal),
+                self._make_dataloader(torch.randn([16, 3, 32, 32])),
+            ),
+            (
+                cifar_vgg.Model.get_model_from_name("cifar_vgg_11_4", initializer=kaiming_normal, batchnorm_type="layernorm"),
+                cifar_vgg.Model.get_model_from_name("cifar_vgg_11_8", initializer=kaiming_normal, batchnorm_type="layernorm$2"),
+                self._make_dataloader(torch.randn([16, 3, 32, 32])),
+            ),
+            (
+                cifar_resnet.Model.get_model_from_name("cifar_resnet_20_4", initializer=kaiming_normal, batchnorm_type="layernorm"),
+                cifar_resnet.Model.get_model_from_name("cifar_resnet_20_8", initializer=kaiming_normal, batchnorm_type="layernorm$2"),
+                self._make_dataloader(torch.randn([16, 3, 32, 32])),
+            ),
+        ]
+        for narrow, wide, dataloader in narrow_wide_data:
+            with self.subTest(model=narrow):
+                narrow_dict = narrow.state_dict()
+                perm_spec = self._get_perm_spec(narrow_dict)
+                embed_narrow_dict = perm_spec.apply_padding(
+                    narrow_dict, perm_spec.get_sizes(wide.state_dict()))
+                np.testing.assert_array_almost_equal(
+                    evaluate_model(narrow, dataloader, device="cpu"),
+                    evaluate_model(wide, dataloader, state_dict=to_torch_device(embed_narrow_dict, device="cpu"), device="cpu"))
+
 
     def test_align_embed_submodel(self):
         dataloader = self.models[0][1]
         for sparsity in [1, 0.5, 0.25, 0]:
-            with self.subTest(sparsity=sparsity):
-                wide, narrow = self._make_submodel(20, 2, 20, 16, sparsity=sparsity)
-                wide_dict = wide.state_dict()
-                perm_spec = self._get_perm_spec(wide_dict)
-                rand_perm = perm_spec.get_random_permutation(wide_dict)
-                wide_dict = perm_spec.apply_permutation(wide_dict, rand_perm)
-                sizes = perm_spec.get_sizes(wide_dict)
-                align_obj = PartialWeightAlignment(perm_spec, sizes, kernel="linear", order="random")
-                perm, similarities = align_obj.fit(wide_dict, narrow.state_dict())
-                permuted, mask = align_obj.transform()
-                # check that dense permutation is recovered for nonzero sparse weights
-                for k, v in perm.items():
-                    assert np.all((v == rand_perm[k])[v < sparsity * len(v)])
-                # check that sparse model is the same with and without padding
-                np.testing.assert_array_almost_equal(
-                    evaluate_model(narrow, dataloader, device="cpu"),
-                    evaluate_model(wide, dataloader, state_dict=to_torch_device(permuted, device="cpu"), device="cpu"))
+            for align_class in [lambda x, y, z: PartialWeightAlignment(x, kernel="linear", order="random", target_sizes=y),
+                            #   lambda x, y, z: PartialActivationAlignment(x, dataloader=dataloader, model=z, device="cpu", target_sizes=y),
+                              ]:
+                with self.subTest(sparsity=sparsity, align_class=align_class):
+                    wide, narrow = self._make_submodel(20, 2, 20, 16, sparsity=sparsity)
+                    # self._validate_symmetry(narrow, dataloader, lambda x: to_numpy(wide.state_dict()))
+                    wide_dict = wide.state_dict()
+                    perm_spec = self._get_perm_spec(wide_dict)
+                    rand_perm = perm_spec.get_random_permutation(wide_dict)
+                    wide_dict = perm_spec.apply_permutation(wide_dict, rand_perm)
+                    sizes = perm_spec.get_sizes(wide_dict)
+                    align_obj = align_class(perm_spec, sizes, wide)
+                    perm, similarities = align_obj.fit(wide_dict, narrow.state_dict())
+                    permuted, mask = align_obj.transform()
+                    # check that dense permutation is recovered for nonzero sparse weights
+                    for k, v in perm.items():
+                        assert np.all((v == rand_perm[k])[v < sparsity * len(v)])
+                    # check that sparse model is the same with and without padding
+                    np.testing.assert_array_almost_equal(
+                        evaluate_model(narrow, dataloader, device="cpu"),
+                        evaluate_model(wide, dataloader, state_dict=to_torch_device(permuted, device="cpu"), device="cpu"))
 
     # def _make_partially_aligned(self, n_in, n_out, n_aligned, n_unaligned):
     #     full_h2 = n_aligned + 2 * n_unaligned
