@@ -5,7 +5,8 @@ from tqdm import tqdm
 import numpy as np
 from scipy.optimize import linear_sum_assignment
 
-from nnperm.perm import PermutationSpec, perm_compose
+from nnperm.perm import perm_compose
+from nnperm.spec import PermutationSpec
 from nnperm.utils import keys_match, to_numpy
 from nnperm.align.kernel import get_kernel_from_name
 
@@ -38,7 +39,7 @@ class WeightAlignment:
             self.kernel_fn = self.kernel
 
     def _alignment_order(self):
-        perm_names = list(self.perm_spec.perm_to_axes.keys())
+        perm_names = list(self.perm_spec.group_to_axes.keys())
         if self.order == "random":  # randomly choose order in which to solve permutations
             return [[perm_names[i] for i in self.random_state.permutation(
                         len(perm_names))] for _ in range(self.max_iter)]
@@ -71,7 +72,7 @@ class WeightAlignment:
         n = len(self.perms_[perm_key])
         gram_matrix = np.zeros((n, n))
         # add similarities for every param that has same perm
-        for layer_name, axis in self.perm_spec.perm_to_axes[perm_key]:
+        for layer_name, axis, _ in self.perm_spec.group_to_axes[perm_key]:
             if "bias" in layer_name and not self.align_bias:
                 continue
             w_a = self.params_a_[layer_name]
@@ -111,7 +112,7 @@ class WeightAlignment:
         return self.perms_, self.similarity_
 
     def _get_align_mask(self):  # this will change for partial weight permutation
-        return self.perm_spec.get_perm_mask()
+        return self.perm_spec.get_mask()
 
     def transform(self, params: Dict[str, np.ndarray] = None):
         if self.perms_ is None:

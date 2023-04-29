@@ -32,7 +32,7 @@ This object is based on code from Ainsworth, Hayase, & Srinivasa (2022) at [http
 
 Permutations and scaling in `nnperm.py`.
 `PermutationSpec` and part of the `fit()` algorithm are based on Ainsworth, Hayase, & Srinivasa (2022).
-Original implementation of geometric realignment (a different depreciated algorithm) by Udbhav Bamba.
+Original implementation of geometric realignment (a different deprecated algorithm) by Udbhav Bamba.
 
 To run unit tests, call `python -m nnperm.test`.
 

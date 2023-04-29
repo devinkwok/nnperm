@@ -7,7 +7,7 @@ import pandas as pd
 import torch
 
 from nnperm.align import WeightAlignment
-from nnperm.perm import PermutationSpec
+from nnperm.spec import PermutationSpec
 from nnperm.utils import get_open_lth_ckpt, find_open_lth_ckpt
 
 

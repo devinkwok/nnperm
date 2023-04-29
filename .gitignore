@@ -6,4 +6,4 @@ refactor-outputs
 *.pyc
 TODO.txt
 slurm-scripts
-test-scripts
+test_scripts

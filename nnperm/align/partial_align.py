@@ -4,7 +4,7 @@ import torch
 
 from nnperm.align.weight_align import WeightAlignment
 from nnperm.align.activation_align import ActivationAlignment
-from nnperm.perm import PermutationSpec
+from nnperm.spec import PermutationSpec
 
 
 def _partial_init_fit(params_a, params_b, perm_spec, target_sizes):

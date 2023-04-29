@@ -5,7 +5,7 @@ import numpy as np
 import torch
 
 from nnperm.align.weight_align import WeightAlignment
-from nnperm.perm import PermutationSpec
+from nnperm.spec import PermutationSpec
 from nnperm.eval import evaluate_intermediates
 from nnperm.utils import to_torch_device
 
@@ -61,9 +61,9 @@ class ActivationAlignment(WeightAlignment):
         self.gram_matrix_ = {}
         # get map of layer names to perm names
         layers_to_perm = {}
-        for perm, axes in self.perm_spec.perm_to_axes.items():
-            for layer_name, dim in axes:
-                if dim == 0:  # assume dim 0 is output dim
+        for perm, axes in self.perm_spec.group_to_axes.items():
+            for layer_name, dim, is_input in axes:
+                if not is_input:
                     # remove parameter type (e.g. "".weight", ".bias") from layer name
                     layer_name = layer_name[:-(len(layer_name.split(".")[-1]) + 1)]
                     layers_to_perm[layer_name] = perm

@@ -10,7 +10,7 @@ import numpy as np
 
 from nnperm.align import WeightAlignment
 from nnperm.barrier import get_barrier_stats
-from nnperm.perm import PermutationSpec
+from nnperm.spec import PermutationSpec
 from nnperm.utils import get_open_lth_ckpt, get_open_lth_data, device
 
 

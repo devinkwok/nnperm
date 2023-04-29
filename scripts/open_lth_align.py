@@ -5,7 +5,7 @@ import argparse
 from pathlib import Path
 
 from nnperm.align import WeightAlignment, ActivationAlignment, PartialActivationAlignment, PartialWeightAlignment
-from nnperm.perm import PermutationSpec
+from nnperm.spec import PermutationSpec
 from nnperm.utils import get_open_lth_ckpt, get_dataloader, get_device
 
 
@@ -52,7 +52,7 @@ else:
     print("Aligning sequential model")
     perm_spec = PermutationSpec.from_sequential_model(params_a)
 
-perm_spec = perm_spec.subset_perm(exclude_axes=exclude_layers)
+perm_spec = perm_spec.subset(exclude_axes=exclude_layers)
 print(model_hparams_a.display)
 print(dataset_hparams_a.display)
 

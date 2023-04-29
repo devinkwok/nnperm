@@ -4,7 +4,7 @@ from pathlib import Path
 from collections import defaultdict
 import numpy as np
 
-from nnperm.perm import PermutationSpec
+from nnperm.spec import PermutationSpec
 
 ## Setup
 parser = argparse.ArgumentParser()
@@ -23,7 +23,7 @@ for perm_dir in args.perm_dirs:
     fixed_points = defaultdict(list)
     fixed_points_summary = defaultdict(list)
     perm_keys = list(perms.keys())
-    layers = list(perm_spec.perm_to_axes.keys())
+    layers = list(perm_spec.group_to_axes.keys())
     idx_a, idx_b = np.triu_indices(len(perm_keys))
     # get fixed points per layer
     for i, (a, b) in enumerate(zip(idx_a, idx_b)):

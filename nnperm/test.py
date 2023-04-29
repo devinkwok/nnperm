@@ -13,7 +13,7 @@ from open_lth.models import cifar_resnet
 from open_lth.models import cifar_vgg
 from open_lth.models.initializers import kaiming_normal
 
-from nnperm.perm import PermutationSpec
+from nnperm.spec import PermutationSpec
 from nnperm.align import *
 from nnperm.eval import evaluate_model
 from nnperm.barrier import EnsembleModel, interpolate_dict
@@ -127,7 +127,7 @@ class TestNNPerm(unittest.TestCase):
             state_dict = model.state_dict()
             perm_spec = self._get_perm_spec(state_dict)
             sizes = perm_spec.get_sizes(state_dict)
-            self.assertEqual(len(sizes), len(perm_spec.perm_to_axes))
+            self.assertEqual(len(sizes), len(perm_spec.group_to_axes))
             padded = perm_spec.apply_padding(state_dict, {k: v + 5 for k, v in sizes.items()})
             self.assertTrue(keys_match(state_dict, padded))
             original_shapes = np.concatenate([v.shape for k, v in state_dict.items()])
@@ -141,40 +141,42 @@ class TestNNPerm(unittest.TestCase):
 
     def test_perm(self):
         for model, data in self.models:
-            state_dict = model.state_dict()
-            perm_spec = self._get_perm_spec(state_dict)
-            transform_fn = lambda x: perm_spec.apply_rand_perm(x)
-            self._validate_symmetry(model, data, transform_fn)
-            rand_perm = perm_spec.get_random_permutation(state_dict)
-            new_state_dict = perm_spec.apply_permutation(perm_spec.apply_permutation(
-                state_dict, rand_perm), rand_perm.inverse())
-            identity = rand_perm.compose(rand_perm.inverse()).to_matrices()
-            for k in state_dict.keys():
-                np.testing.assert_array_equal(state_dict[k], new_state_dict[k])
-            for x in identity.values():
-                np.testing.assert_array_equal(x, np.eye(len(x)))
+            with self.subTest(model=model):
+                state_dict = model.state_dict()
+                perm_spec = self._get_perm_spec(state_dict)
+                transform_fn = lambda x: perm_spec.apply_rand_perm(x)
+                self._validate_symmetry(model, data, transform_fn)
+                rand_perm = perm_spec.get_random_permutation(state_dict)
+                new_state_dict = perm_spec.apply_permutation(perm_spec.apply_permutation(
+                    state_dict, rand_perm), rand_perm.inverse())
+                identity = rand_perm.compose(rand_perm.inverse()).to_matrices()
+                for k in state_dict.keys():
+                    np.testing.assert_array_equal(state_dict[k], new_state_dict[k])
+                for x in identity.values():
+                    np.testing.assert_array_equal(x, np.eye(len(x)))
 
     def test_subset_perm(self):
         for model, data in self.models:
-            state_dict = model.state_dict()
-            perm_spec = self._get_perm_spec(state_dict)
-            ps2 = perm_spec.subset_perm()
-            self.assertDictEqual(perm_spec.axes_to_perm, ps2.axes_to_perm)
-            self.assertDictEqual(perm_spec.perm_to_axes, ps2.perm_to_axes)
+            with self.subTest(model=model):
+                state_dict = model.state_dict()
+                perm_spec = self._get_perm_spec(state_dict)
+                ps2 = perm_spec.subset()
+                self.assertDictEqual(perm_spec.axes_to_group, ps2.axes_to_group)
+                self.assertDictEqual(perm_spec.group_to_axes, ps2.group_to_axes)
 
-            one_perm = list(perm_spec.perm_to_axes.keys())[0:1]
-            ps2 = perm_spec.subset_perm(include_perms=one_perm)
-            self.assertListEqual(list(ps2.perm_to_axes.keys()), one_perm)
-            for v in ps2.axes_to_perm.values():
-                for k in v:
-                    self.assertTrue(k is None or k == one_perm[0])
+                one_perm = list(perm_spec.group_to_axes.keys())[0:1]
+                ps2 = perm_spec.subset(include_groups=one_perm)
+                self.assertListEqual(list(ps2.group_to_axes.keys()), one_perm)
+                for v in ps2.axes_to_group.values():
+                    for k in v:
+                        self.assertTrue(k is None or k[0] == one_perm[0])
 
-            one_layer = list(perm_spec.axes_to_perm.keys())[0:1]
-            ps2 = perm_spec.subset_perm(include_axes=one_layer)
-            self.assertListEqual(list(ps2.axes_to_perm.keys()), one_layer)
-            for v in ps2.perm_to_axes.values():
-                for k, i in v:
-                    self.assertEqual(k, one_layer[0])
+                one_layer = list(perm_spec.axes_to_group.keys())[0:1]
+                ps2 = perm_spec.subset(include_axes=one_layer)
+                self.assertListEqual(list(ps2.axes_to_group.keys()), one_layer)
+                for v in ps2.group_to_axes.values():
+                    for k, _, _ in v:
+                        self.assertEqual(k, one_layer[0])
 
     def test_fit_transform(self):
         for model, _ in self.models:
@@ -225,7 +227,7 @@ class TestNNPerm(unittest.TestCase):
         align_obj = WeightAlignment(perm_spec, kernel="linear")
         self.assertRaises(ValueError, lambda: align_obj.fit(params_a, params_b))
         # should succeed if the differing size layers are removed from perm_spec
-        subset_spec = perm_spec.subset_perm(exclude_axes=[weight_k, bias_k])
+        subset_spec = perm_spec.subset(exclude_axes=[weight_k, bias_k])
         align_obj = WeightAlignment(subset_spec, kernel="linear")
         align_obj.fit(perm_spec.apply_rand_perm(params_a), params_b)
         mask = {k: np.random.randn(*v.shape) for k, v in params_a.items()}

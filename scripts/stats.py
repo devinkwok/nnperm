@@ -28,7 +28,7 @@ from scipy.stats import pearsonr
 
 from nnperm.eval import evaluate_intermediates
 from nnperm.barrier import interpolate_dict
-from nnperm.perm import PermutationSpec
+from nnperm.spec import PermutationSpec
 from nnperm.utils import get_open_lth_ckpt, get_open_lth_data, get_device, to_numpy, to_torch_device
 
 
@@ -269,9 +269,9 @@ assert_not_equal(params_a.values(), params_b.values(), params_int.values())
 # for channel-wise stats, get layers that share the same outputs to a given perm
 # this allows comparison between weights and activations
 layers_to_perm = {}
-for k, layers in perm_spec.perm_to_axes.items():
-    for layer_name, dim in layers:
-        if dim == 0:  # assume dim 0 is output dim
+for k, layers in perm_spec.group_to_axes.items():
+    for layer_name, dim, is_input in layers:
+        if not is_input:
             # remove parameter type (e.g. "".weight", ".bias") from layer name
             if layer_name in layers_to_perm:
                 print(f"Warning: overwriting layer {layer_name} perm from {layers_to_perm[layer_name]} to {k}")

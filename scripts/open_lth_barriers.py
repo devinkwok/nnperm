@@ -8,7 +8,7 @@ from pathlib import Path
 import torch
 
 from nnperm.barrier import get_barrier_stats
-from nnperm.perm import PermutationSpec
+from nnperm.spec import PermutationSpec
 from nnperm.utils import get_open_lth_ckpt, get_open_lth_data, parse_int_list, device
 
 

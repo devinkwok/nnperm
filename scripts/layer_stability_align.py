@@ -6,7 +6,7 @@ from pathlib import Path
 import pandas as pd
 
 from nnperm.align import WeightAlignment
-from nnperm.perm import PermutationSpec
+from nnperm.spec import PermutationSpec
 from nnperm.utils import get_open_lth_ckpt, find_open_lth_ckpt
 
 
