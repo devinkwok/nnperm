@@ -179,7 +179,7 @@ class ModelSpec:
         output = deepcopy(to_numpy(state_dict))
         for p, transform in transform_dict.items():
             for layer_name, dim, is_input in self.group_to_axes[p]:
-                output[layer_name] = apply_fn(transform, output[layer_name], dim, is_input)
+                output[layer_name] = apply_fn(transform, output[layer_name], dim, is_input=is_input, layer_name=layer_name)
         return output
 
     @staticmethod

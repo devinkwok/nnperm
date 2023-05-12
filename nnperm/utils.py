@@ -59,10 +59,14 @@ def keys_match(a: dict, b: dict):
     return True
 
 
-def is_valid_key(key: str, include_keywords: List[str] = None, exclude_keywords: List[str] = None):
+def is_valid_key(key: str, include_keywords: List[str] = None, exclude_keywords: List[str] = None, require_all=False):
     if include_keywords is not None:
-        if not any(k in key for k in include_keywords):
-            return False
+        if require_all:
+            if not all(k in key for k in include_keywords):
+                return False
+        else:
+            if not any(k in key for k in include_keywords):
+                return False
     if exclude_keywords is not None:
         if any(k in key for k in exclude_keywords):
             return False

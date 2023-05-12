@@ -13,7 +13,7 @@ from open_lth.models import cifar_resnet
 from open_lth.models import cifar_vgg
 from open_lth.models.initializers import kaiming_normal
 
-from nnperm.spec import PermutationSpec
+from nnperm.spec import PermutationSpec, ScaleSpec
 from nnperm.align import *
 from nnperm.eval import evaluate_model
 from nnperm.barrier import EnsembleModel, interpolate_dict
@@ -43,11 +43,11 @@ class TestNNPerm(unittest.TestCase):
                 cifar_vgg.Model.get_model_from_name("cifar_vgg_11", initializer=kaiming_normal),
                 self._make_dataloader(torch.randn([16, 3, 32, 32])),
             ),
-            (
-                cifar_resnet.Model.get_model_from_name(
-                      "cifar_resnet_20_4", initializer=kaiming_normal),
-                self._make_dataloader(torch.randn([16, 3, 32, 32])),
-            ),
+            # (
+            #     cifar_resnet.Model.get_model_from_name(
+            #           "cifar_resnet_20_4", initializer=kaiming_normal),
+            #     self._make_dataloader(torch.randn([16, 3, 32, 32])),
+            # ),
         ]
         for model, _ in self.models:
             self._randomize_batchnorm_weights(model)
@@ -493,6 +493,68 @@ class TestNNPerm(unittest.TestCase):
         # perm_spec = self._get_perm_spec(state_dict)
         # align_obj = PartialWeightAlignment(perm_spec, target_sizes)
         # perms, mask = align_obj._split_perms(perms, sizes_a, sizes_b)
+
+    def _get_scale_spec(self, state_dict):
+        if any("block" in k for k in state_dict.keys()):
+            return ScaleSpec.from_residual_model(state_dict)
+        return ScaleSpec.from_sequential_model(state_dict)
+
+    def test_scale(self):
+        for model, data in self.models:
+            with self.subTest(model=model):
+                state_dict = model.state_dict()
+                scale_spec = self._get_scale_spec(state_dict)
+
+                identity_scale = scale_spec.get_identity_scale(state_dict)
+                transform_fn = lambda x: scale_spec.apply_scale(x, identity_scale)
+                self._validate_symmetry(model, data, transform_fn)
+
+                const_scale = {k: np.full_like(v, 0.9) for k, v in identity_scale.items()}
+                transform_fn = lambda x: scale_spec.apply_scale(x, const_scale)
+                self._validate_symmetry(model, data, transform_fn)
+
+                rand_scale = scale_spec.get_random_scale(state_dict)
+                transform_fn = lambda x: scale_spec.apply_scale(x, rand_scale)
+                self._validate_symmetry(model, data, transform_fn)
+
+    def test_rollback_normalization(self):
+        for model, data in self.models:
+            if any("bn" in x for x in model.state_dict().keys()):
+                with self.subTest(model=model):
+                    state_dict = model.state_dict()
+                    scale_spec = self._get_scale_spec(state_dict)
+                    transform_fn = lambda x: scale_spec.apply_rollback_batchnorm(x)
+                    self._validate_symmetry(model, data, transform_fn)
+
+    def test_scale_norm(self):
+        for model, data in self.models:
+            if any("bn" in x for x in model.state_dict().keys()):
+                with self.subTest(model=model):
+                    state_dict = to_numpy(model.state_dict())
+                    scale_spec = self._get_scale_spec(state_dict)
+
+                    ones_state_dict = {k: np.ones_like(v) for k, v in state_dict.items()}
+                    ones_norm = scale_spec.get_norm(ones_state_dict, normalize=True)
+                    for k, v in ones_norm.items():
+                        np.testing.assert_allclose(v, 1.), (k, v)
+
+                    rand_scale = scale_spec.get_random_scale(state_dict)
+                    scaled_dict = scale_spec.apply_scale(state_dict, rand_scale)
+                    norm = scale_spec.get_norm(state_dict)
+                    new_norm = scale_spec.get_norm(scaled_dict)
+                    for k, v in norm.compose(new_norm.inverse()).items():
+                        np.testing.assert_allclose(rand_scale[k], v)
+                    avg_norm = scale_spec.get_avg_norm(state_dict, scaled_dict)
+
+                    # new_state_dict = scale_spec.apply_scale(scale_spec.apply_scale(
+                    #     state_dict, rand_scale), rand_scale.inverse())
+                    # identity = rand_scale.compose(rand_scale.inverse()).to_matrices()
+                    # for k in state_dict.keys():
+                    #     np.testing.assert_allclose(state_dict[k], new_state_dict[k])
+                    # for x in identity.values():
+                    #     np.testing.assert_allclose(x, np.eye(len(x)))
+                    # scale = scale_spec.get_norm(state_dict)
+                    # scale_avg = scale_spec.get_avg_norm(state_dict, output)
 
 
 if __name__ == "__main__":

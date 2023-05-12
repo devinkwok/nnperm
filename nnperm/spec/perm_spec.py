@@ -21,7 +21,7 @@ class PermutationSpec(ModelSpec):
         return Permutations(self._generate_transform(identity_perm_fn, state_dict))
 
     @staticmethod
-    def permute_layer(permutation: List[int], param: np.ndarray, dim, is_input=False) -> np.ndarray:
+    def permute_layer(permutation: List[int], param: np.ndarray, dim, is_input=False, layer_name=None) -> np.ndarray:
         if permutation is None:
             return param
         assert param.shape[dim] == len(permutation), (param.shape, len(permutation))
@@ -34,7 +34,7 @@ class PermutationSpec(ModelSpec):
         return self.apply_permutation(state_dict, self.get_random_permutation(state_dict))
 
     @staticmethod
-    def append_zeros(n: int, param: np.ndarray, dim, is_input=False) -> np.ndarray:
+    def append_zeros(n: int, param: np.ndarray, dim, is_input=False, layer_name=None) -> np.ndarray:
         pad_dims = [(0, 0)] * len(param.shape)
         assert n - param.shape[dim] >= 0
         pad_dims[dim] = (0, n - param.shape[dim])
@@ -59,8 +59,8 @@ class PermutationSpec(ModelSpec):
             axes_to_group, group_to_axes = {}, {}
             for k, axes in data["axes_to_perm"].items():
                 axes_to_group[k] = [v if v is None else (v, i == INPUT_DIM) for i, v in enumerate(axes)]
-            for k, (name, dim) in data["perm_to_axes"].items():
-                group_to_axes[k] = (name, dim, dim == INPUT_DIM)
+            for k, axes in data["perm_to_axes"].items():
+                group_to_axes[k] = [(name, dim, dim == INPUT_DIM) for name, dim in axes]
         else:
             axes_to_group = data["axes_to_group"]
             group_to_axes = data["group_to_axes"]
