@@ -53,24 +53,28 @@ def residual_model_spec(state_dict: Dict[str, nn.Module], block_key="blocks\.(\\
                 spec[k][input_dim] = (skip_group, True)
                 # map output of block (sequential input to shortcut) to next skip
                 skip_group = f"skip_{i}-{shortcut.group(1)}"
-                group2group[spec[k][output_dim][0]] = (skip_group, False)
-                group2group[next_skip] = (skip_group, False)
+                group2group[spec[k][output_dim][0]] = skip_group
+                group2group[next_skip] = skip_group
         else:
             block = match(block_key, k)
             if block is not None:
                 # entering new block from sequential, let skip_group be input
                 if last_block is None:
                     skip_group = f"skip_{i}-{block.group(1)}"
-                    group2group[spec[k][input_dim][0]] = (skip_group, True)
-                # entering new block from another block, map input group to skip_group
-                elif block.group(1) != last_block.group(1):
-                    group2group[spec[k][input_dim][0]] = (skip_group, True)
+                    group2group[spec[k][input_dim][0]] = skip_group
             else:  # regular sequential layer
                 if last_block is not None:   # leaving block, map input group to skip_group
-                    group2group[spec[k][input_dim][0]] = (skip_group, True)
+                    group2group[spec[k][input_dim][0]] = skip_group
             last_block = block
-    for k, v in spec.items():  # replace every name from group2group so that key->value 
-        spec[k] = tuple([group2group[x[0]] if x is not None and x[0] in group2group else x for x in v])
+    # replace every name from group2group so that key->value
+    for k, v in spec.items():
+        axes = []
+        for i, x in enumerate(v):
+            if x is not None and x[0] in group2group:
+                axes.append((group2group[x[0]], x[1]))
+            else:
+                axes.append(x)
+        spec[k] = tuple(axes)
     return spec
 
 
