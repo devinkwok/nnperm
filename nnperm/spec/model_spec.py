@@ -62,6 +62,9 @@ def residual_model_spec(state_dict: Dict[str, nn.Module], block_key="blocks\.(\\
                 if last_block is None:
                     skip_group = f"skip_{i}-{block.group(1)}"
                     group2group[spec[k][input_dim][0]] = skip_group
+                # entering new block from another block, let skip_group be input
+                elif block.group(1) != last_block.group(1):
+                    group2group[spec[k][input_dim][0]] = skip_group
             else:  # regular sequential layer
                 if last_block is not None:   # leaving block, map input group to skip_group
                     group2group[spec[k][input_dim][0]] = skip_group

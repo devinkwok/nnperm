@@ -87,7 +87,10 @@ def open_lth_align(ckpt_a: Path,
         print(dataset_hparams_a.display)
 
     align_type, kernel, *other_args = type.split("_")
-    perm_spec = perm_spec.subset(exclude_axes=exclude_layers)
+    # NOTE: do not subset perm_spec for activation align, because it depends on
+    # perm_spec to know where to align hidden layers without parameters (e.g. ReLU outputs)
+    if align_type != "activation":
+        perm_spec = perm_spec.subset(exclude_axes=exclude_layers)
 
     AlignClass = ActivationAlignment if align_type == "activation" else WeightAlignment
     if any(x != y for x, y in zip(perm_spec.get_sizes(params_a).values(), perm_spec.get_sizes(params_b).values())):

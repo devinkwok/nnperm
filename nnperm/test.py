@@ -30,6 +30,7 @@ class TestNNPerm(unittest.TestCase):
         ## Setup
         self.models = [
             (
+                "sequential",
                 nn.Sequential(
                     nn.Linear(20, 10),
                     nn.ReLU(),
@@ -40,16 +41,18 @@ class TestNNPerm(unittest.TestCase):
                 self._make_dataloader(torch.randn([16, 20])),
             ),
             (
+                "vgg",
                 cifar_vgg.Model.get_model_from_name("cifar_vgg_11", initializer=kaiming_normal),
                 self._make_dataloader(torch.randn([16, 3, 32, 32])),
             ),
-            # (
-            #     cifar_resnet.Model.get_model_from_name(
-            #           "cifar_resnet_20_4", initializer=kaiming_normal),
-            #     self._make_dataloader(torch.randn([16, 3, 32, 32])),
-            # ),
+            (
+                "resnet",
+                cifar_resnet.Model.get_model_from_name(
+                      "cifar_resnet_20_4", initializer=kaiming_normal),
+                self._make_dataloader(torch.randn([16, 3, 32, 32])),
+            ),
         ]
-        for model, _ in self.models:
+        for _, model, _ in self.models:
             self._randomize_batchnorm_weights(model)
             self._insert_small_weights(model, 0.05)
 
@@ -123,7 +126,7 @@ class TestNNPerm(unittest.TestCase):
         return PermutationSpec.from_sequential_model(state_dict)
 
     def test_apply(self):
-        for model, _ in self.models:
+        for model_name, model, _ in self.models:
             state_dict = model.state_dict()
             perm_spec = self._get_perm_spec(state_dict)
             sizes = perm_spec.get_sizes(state_dict)
@@ -140,8 +143,8 @@ class TestNNPerm(unittest.TestCase):
                 self.assertEqual(v, len(perms[k]))
 
     def test_perm(self):
-        for model, data in self.models:
-            with self.subTest(model=model):
+        for model_name, model, data in self.models:
+            with self.subTest(model=model_name):
                 state_dict = model.state_dict()
                 perm_spec = self._get_perm_spec(state_dict)
                 transform_fn = lambda x: perm_spec.apply_rand_perm(x)
@@ -156,8 +159,8 @@ class TestNNPerm(unittest.TestCase):
                     np.testing.assert_array_equal(x, np.eye(len(x)))
 
     def test_subset_perm(self):
-        for model, data in self.models:
-            with self.subTest(model=model):
+        for model_name, model, data in self.models:
+            with self.subTest(model=model_name):
                 state_dict = model.state_dict()
                 perm_spec = self._get_perm_spec(state_dict)
                 ps2 = perm_spec.subset()
@@ -179,7 +182,7 @@ class TestNNPerm(unittest.TestCase):
                         self.assertEqual(k, one_layer[0])
 
     def test_fit_transform(self):
-        for model, _ in self.models:
+        for _, model, _ in self.models:
             state_dict = model.state_dict()
             perm_spec = self._get_perm_spec(state_dict)
             target_params = perm_spec.apply_rand_perm(state_dict)
@@ -200,21 +203,21 @@ class TestNNPerm(unittest.TestCase):
     def test_align(self):
         for seed in [100, 200]:
             self.setUp()
-            for model, data in self.models:
+            for model_name, model, data in self.models:
                 state_dict = model.state_dict()
                 perm_spec = self._get_perm_spec(state_dict)
                 for weight_noise, kernel, order, make_perm_fn in product(
                     [0., 1e-1], ["linear", "cosine", "loglinear"], ["forward", "backward", "random"],
                     [perm_spec.get_random_permutation],
                 ):
-                    with self.subTest(model=model, weight_noise=weight_noise, kernel=kernel, order=order, perm_fn=make_perm_fn):
+                    with self.subTest(model=model_name, weight_noise=weight_noise, kernel=kernel, order=order, perm_fn=make_perm_fn):
                         align_obj = WeightAlignment(perm_spec, kernel=kernel, seed=seed, order=order)
                         perm = make_perm_fn(state_dict)
                         self._validate_perm_align(model, data, perm_spec, perm, align_obj, noise_std=weight_noise)
 
     def test_partial_align(self):
         # can align when ignoring layers that differ in size
-        params_a = self.models[0][0].state_dict()
+        params_a = self.models[0][1].state_dict()
         params_b = {k: v for k, v in params_a.items()}
         weight_k = list(params_a.keys())[-2]
         bias_k = list(params_a.keys())[-1]
@@ -239,26 +242,27 @@ class TestNNPerm(unittest.TestCase):
                 self.assertTrue(np.any(mask[k] != permuted_mask[k]))
 
     def test_activation_align(self):
-        for model, data in self.models:
+        for model_name, model, data in self.models:
             state_dict = model.state_dict()
             perm_spec = self._get_perm_spec(state_dict)
             for weight_noise, kernel, intermediate_type, make_perm_fn in product(
                 [0., 1e-8], ["linear", "cosine"], ["first", "all", "last"], [perm_spec.get_random_permutation],
             ):
-                with self.subTest(model=model, weight_noise=weight_noise, intermediate_type=intermediate_type, kernel=kernel, perm_fn=make_perm_fn):
-                    align_obj = ActivationAlignment(perm_spec, data, model, kernel=kernel, device="cpu")
+                with self.subTest(model=model_name, weight_noise=weight_noise, intermediate_type=intermediate_type, kernel=kernel, perm_fn=make_perm_fn):
+                    # need to exclude relu activations because they don't align networks at initialization
+                    align_obj = ActivationAlignment(perm_spec, data, model, kernel=kernel, exclude=["relu"], device="cpu")
                     perm = make_perm_fn(state_dict)
                     self._validate_perm_align(model, data, perm_spec, perm, align_obj, noise_std=weight_noise)
 
     def test_bootstrap(self):
-        for model, data in self.models:
+        for model_name, model, data in self.models:
             state_dict = model.state_dict()
             perm_spec = self._get_perm_spec(state_dict)
             for kernel, order, make_perm_fn in product(
                 ["linear_bootstrap_1000"], ["random"],
                 [ perm_spec.get_random_permutation],
             ):
-                with self.subTest(model=model, kernel=kernel, order=order, perm_fn=make_perm_fn):
+                with self.subTest(model=model_name, kernel=kernel, order=order, perm_fn=make_perm_fn):
                     align_obj = WeightAlignment(perm_spec, kernel=kernel, order=order)
                     perm = make_perm_fn(state_dict)
                     self._validate_perm_align(model, data, perm_spec, perm, align_obj,
@@ -315,7 +319,7 @@ class TestNNPerm(unittest.TestCase):
         return full_model, model_a, model_b, align_mask
 
     def test_layerwise_ensembling(self):
-        x = next(iter(self.models[0][1]))[0]
+        x = next(iter(self.models[0][2]))[0]
         with torch.no_grad():
             for clone in [[], [1], [2], [3], [1, 2], [1, 3], [2, 3], [1, 2, 3]]:
                 full_model, model_a, model_b, align_mask = self._make_conjoined_network(20, 2, 6, 3, clone)
@@ -402,7 +406,7 @@ class TestNNPerm(unittest.TestCase):
 
 
     def test_align_embed_submodel(self):
-        dataloader = self.models[0][1]
+        dataloader = self.models[0][2]
         for sparsity in [1, 0.5, 0.25, 0]:
             for align_class in [lambda x, y, z: PartialWeightAlignment(x, kernel="linear", order="random", target_sizes=y),
                             #   lambda x, y, z: PartialActivationAlignment(x, dataloader=dataloader, model=z, device="cpu", target_sizes=y),
@@ -500,8 +504,8 @@ class TestNNPerm(unittest.TestCase):
         return ScaleSpec.from_sequential_model(state_dict)
 
     def test_scale(self):
-        for model, data in self.models:
-            with self.subTest(model=model):
+        for model_name, model, data in self.models:
+            with self.subTest(model=model_name):
                 state_dict = model.state_dict()
                 scale_spec = self._get_scale_spec(state_dict)
 
@@ -518,18 +522,19 @@ class TestNNPerm(unittest.TestCase):
                 self._validate_symmetry(model, data, transform_fn)
 
     def test_rollback_normalization(self):
-        for model, data in self.models:
+        for model_name, model, data in self.models:
             if any("bn" in x for x in model.state_dict().keys()):
-                with self.subTest(model=model):
+                with self.subTest(model=model_name):
                     state_dict = model.state_dict()
                     scale_spec = self._get_scale_spec(state_dict)
                     transform_fn = lambda x: scale_spec.apply_rollback_batchnorm(x)
                     self._validate_symmetry(model, data, transform_fn)
 
     def test_scale_norm(self):
-        for model, data in self.models:
+        #FIXME doesn't work on resnets
+        for model_name, model, data in self.models:
             if any("bn" in x for x in model.state_dict().keys()):
-                with self.subTest(model=model):
+                with self.subTest(model=model_name):
                     state_dict = to_numpy(model.state_dict())
                     scale_spec = self._get_scale_spec(state_dict)
 

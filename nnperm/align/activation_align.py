@@ -37,11 +37,12 @@ class ActivationAlignment(WeightAlignment):
         x, y = next(iter(self.dataloader))
         tmp_batch = [(x[:1], y[:1])]
         # for each permutation, get all intermediate outputs that output to this permutation
-        hidden_batches = evaluate_intermediates(model, tmp_batch, self.device, exclude=self.exclude, verbose=self.verbose)
+        # NOTE: do not exclude any layers as that may mess up the perm assignment to layers without params
+        hidden_batches = evaluate_intermediates(model, tmp_batch, self.device, exclude=None, verbose=self.verbose)
         _, intermediates, _, _ = next(hidden_batches)
         perm_to_layers = defaultdict(list)
         last_perm = None
-        for k, v in intermediates.items():
+        for k in intermediates.keys():
             if k.endswith(".out"):  # ignore inputs to layers
                 # include outputs of layers without parameters in the last perm group
                 if any(x in k for x in self.append_keys):
@@ -53,6 +54,7 @@ class ActivationAlignment(WeightAlignment):
                         last_perm = perm
         # choose the appropriate layers to include
         for k, v in perm_to_layers.items():
+            v = [x for x in v if is_valid_key(x, exclude_keywords=self.exclude)]
             if self.intermediate_type == "first":
                 perm_to_layers[k] = v[:1]
             elif self.intermediate_type == "all":

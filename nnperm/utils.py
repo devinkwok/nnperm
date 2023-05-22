@@ -6,7 +6,9 @@ import numpy as np
 
 import sys
 sys.path.append("open_lth")
-from open_lth.api import get_ckpt, get_dataset_hparams, get_dataloader, find_ckpt_by_it, get_device
+from open_lth.api import get_ckpt, get_dataset_hparams, get_dataloader, find_ckpt_by_it, get_device, one_shot_prune
+from open_lth.pruning.sparse_global import PruningHparams, Strategy
+from open_lth.utils.tensor_utils import vectorize, unvectorize, shuffle_tensor, shuffle_state_dict
 
 
 def device():
@@ -42,6 +44,11 @@ def multiplicative_weight_noise(state_dict, std, n_layers=-1,
     return state_dict
 
 
+def prune(model, fraction: float, type: str = 'sparse_global', randomize: str = 'identity', seed: int = 42):
+    model, mask = one_shot_prune(model, fraction, type=type, randomize=randomize, seed=seed, layers_to_ignore="fc.weight")
+    return model, mask
+
+
 def to_torch_device(state_dict: Dict[str, np.ndarray], device="cuda"):
     return {k: torch.tensor(v, device=device) if not isinstance(v, torch.Tensor)  \
             else v.detach().clone().to(device=device) for k, v in state_dict.items()}
@@ -73,8 +80,8 @@ def is_valid_key(key: str, include_keywords: List[str] = None, exclude_keywords:
     return True
 
 
-def parse_int_list(arg):  # parse str containing range or list of ints
+def parse_int_list(arg):  # parse str containing int range or list of str
     if "-" in arg:
         start, end = arg.split("-")
-        return list(range(int(start), int(end) + 1))
-    return [int(x) for x in arg.split(",")]
+        return [str(x) for x in range(int(start), int(end) + 1)]
+    return [x for x in arg.split(",")]
