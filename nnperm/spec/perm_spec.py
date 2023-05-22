@@ -50,18 +50,37 @@ class PermutationSpec(ModelSpec):
             "group_to_axes": self.group_to_axes,
         }, file)
 
+    #TODO deprecated: load old spec when is_input is missing
+    @staticmethod
+    def _convert_old_version(data):
+        INPUT_DIM = 1  # assume input_dim=1 and output_dim=0
+        axes_to_group, group_to_axes = {}, {}
+        for k, axes in data["axes_to_perm"].items():
+            new_axes = []
+            for i, v in enumerate(axes):
+                if v is None:
+                    new_axes.append(None)
+                else:
+                    assert v[:1] == "P"  # remove prefix "P" from group names
+                    new_axes.append((v[1:], i == INPUT_DIM))
+            axes_to_group[k] = new_axes
+        for k, axes in data["perm_to_axes"].items():
+            assert k[:1] == "P"  # remove prefix "P" from group names
+            group_to_axes[k[1:]] = [(name, dim, dim == INPUT_DIM) for name, dim in axes]
+        perm = {}
+        for k, v in Permutations(data["permutations"]).items():
+            assert k[:1] == "P"  # remove prefix "P" from group names
+            perm[k[1:]] = v
+        return perm, axes_to_group, group_to_axes
+
     @staticmethod
     def load_from_file(file: str):
         data = torch.load(file)
-        perm = Permutations(data["permutations"])
         if "axes_to_perm" in data:  #TODO deprecated: load old spec when is_input is missing
-            INPUT_DIM = 1  # assume input_dim=1 and output_dim=0
-            axes_to_group, group_to_axes = {}, {}
-            for k, axes in data["axes_to_perm"].items():
-                axes_to_group[k] = [v if v is None else (v, i == INPUT_DIM) for i, v in enumerate(axes)]
-            for k, axes in data["perm_to_axes"].items():
-                group_to_axes[k] = [(name, dim, dim == INPUT_DIM) for name, dim in axes]
+            print("Loading old perm_spec")
+            perm, axes_to_group, group_to_axes = PermutationSpec._convert_old_version(data)
         else:
+            perm = Permutations(data["permutations"])
             axes_to_group = data["axes_to_group"]
             group_to_axes = data["group_to_axes"]
         perm_spec = PermutationSpec(axes_to_group, group_to_axes)
