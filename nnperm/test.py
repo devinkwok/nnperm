@@ -30,7 +30,7 @@ class TestNNPerm(unittest.TestCase):
         ## Setup
         self.models = [
             (
-                "sequential",
+                "mlp",
                 nn.Sequential(
                     nn.Linear(20, 10),
                     nn.ReLU(),
@@ -369,33 +369,38 @@ class TestNNPerm(unittest.TestCase):
     def test_embed_into_wider_network_symmetry(self):
         narrow_wide_data = [
             (
+                "mlp",
                 self.TestModel(20, 15, 10, 2),
                 self.TestModel(20, 30, 20, 2),
                 self._make_dataloader(torch.randn([100, 20])),
             ),
             (
+                "vgg",
                 cifar_vgg.Model.get_model_from_name("cifar_vgg_11_4", initializer=kaiming_normal),
                 cifar_vgg.Model.get_model_from_name("cifar_vgg_11_8", initializer=kaiming_normal),
                 self._make_dataloader(torch.randn([16, 3, 32, 32])),
             ),
             (
+                "resnet",
                 cifar_resnet.Model.get_model_from_name("cifar_resnet_20_4", initializer=kaiming_normal),
                 cifar_resnet.Model.get_model_from_name("cifar_resnet_20_8", initializer=kaiming_normal),
                 self._make_dataloader(torch.randn([16, 3, 32, 32])),
             ),
             (
+                "vgg-layernorm",
                 cifar_vgg.Model.get_model_from_name("cifar_vgg_11_4", initializer=kaiming_normal, batchnorm_type="layernorm"),
                 cifar_vgg.Model.get_model_from_name("cifar_vgg_11_8", initializer=kaiming_normal, batchnorm_type="layernorm$2"),
                 self._make_dataloader(torch.randn([16, 3, 32, 32])),
             ),
             (
+                "resnet-layernorm",
                 cifar_resnet.Model.get_model_from_name("cifar_resnet_20_4", initializer=kaiming_normal, batchnorm_type="layernorm"),
                 cifar_resnet.Model.get_model_from_name("cifar_resnet_20_8", initializer=kaiming_normal, batchnorm_type="layernorm$2"),
                 self._make_dataloader(torch.randn([16, 3, 32, 32])),
             ),
         ]
-        for narrow, wide, dataloader in narrow_wide_data:
-            with self.subTest(model=narrow):
+        for name, narrow, wide, dataloader in narrow_wide_data:
+            with self.subTest(model=name):
                 narrow_dict = narrow.state_dict()
                 perm_spec = self._get_perm_spec(narrow_dict)
                 embed_narrow_dict = perm_spec.apply_padding(
@@ -522,6 +527,7 @@ class TestNNPerm(unittest.TestCase):
                 self._validate_symmetry(model, data, transform_fn)
 
     def test_rollback_normalization(self):
+        #FIXME doesn't work on resnets
         for model_name, model, data in self.models:
             if any("bn" in x for x in model.state_dict().keys()):
                 with self.subTest(model=model_name):

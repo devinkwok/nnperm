@@ -7,7 +7,7 @@ import torch
 from nnperm.align.weight_align import WeightAlignment
 from nnperm.spec import PermutationSpec
 from nnperm.eval import evaluate_intermediates
-from nnperm.utils import to_torch_device
+from nnperm.utils import to_torch_device, is_valid_key
 
 
 class ActivationAlignment(WeightAlignment):
