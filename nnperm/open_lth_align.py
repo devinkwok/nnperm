@@ -7,24 +7,6 @@ from nnperm.spec import PermutationSpec
 from nnperm.utils import get_open_lth_ckpt, get_dataloader, get_device, prune
 
 
-# TODO temporary hack for layernorm
-def _get_target_size_model(model, target_size_ckpt):
-    source_size = model.state_dict()
-    if target_size_ckpt is not None:
-        _, _, size_params = get_open_lth_ckpt(target_size_ckpt)
-        # make sure sizes differ by constant ratio
-        ratio = None
-        for k, v in size_params.items():
-            if "layernorm" in k:
-                new_ratio = v.shape[0] / source_size[k].shape[0]
-                assert ratio is None or ratio == new_ratio
-                ratio = new_ratio
-        # scale mean/std of layernorm appropriately so they have the correct scale from the source network
-        print(f"Scaling layernorm by {ratio} due to added padding")
-        _, model, _ = get_open_lth_ckpt(target_size_ckpt, layernorm_scaling=ratio)
-    return model
-
-
 ## Setup
 def open_lth_align(ckpt_a: Path,
         ckpt_b: Path,
@@ -96,8 +78,6 @@ def open_lth_align(ckpt_a: Path,
     if any(x != y for x, y in zip(perm_spec.get_sizes(params_a).values(), perm_spec.get_sizes(params_b).values())):
         AlignClass = PartialActivationAlignment if align_type == "activation" else PartialWeightAlignment
         # get the correct size of model to embed into
-        model_a = _get_target_size_model(model_a, target_size_ckpt_a)
-        model_b = _get_target_size_model(model_b, target_size_ckpt_b)
         print(f"Sizes differ, using {AlignClass.__name__}")  # if sizes differ, use partial alignment
     if align_type == "activation":
         dataset_name = other_args[0]

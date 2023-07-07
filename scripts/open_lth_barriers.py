@@ -18,7 +18,6 @@ parser.add_argument('--repdir_a', required=True, type=Path)
 parser.add_argument('--repdir_b', required=True, type=Path)
 parser.add_argument('--perm_a', default=None, type=Path)
 parser.add_argument('--perm_b', default=None, type=Path)
-parser.add_argument('--target_size_ckpt', default=None, type=Path)  # load this model instead of the ckpts at repdir_a or repdir_b, if doing partial align to a wider network
 parser.add_argument('--train_ep_it', required=True, type=str)
 parser.add_argument('--levels', required=True, type=str)
 parser.add_argument('--save_file', required=True, type=Path)
@@ -38,20 +37,6 @@ if args.save_file.exists() and not args.overwrite:
 
 # get model and data
 (model_hparams, dataset_hparams), model, size_params = get_open_lth_ckpt(args.repdir_a / f"level_{levels[0]}" / "main" / f"model_{train_ep_it[0]}.pth")
-if args.target_size_ckpt is not None:
-    source_size = size_params
-    # TODO temporary hack for layernorm
-    _, _, size_params = get_open_lth_ckpt(args.target_size_ckpt)
-    # make sure sizes differ by constant ratio
-    ratio = None
-    for k, v in size_params.items():
-        if "layernorm" in k:
-            new_ratio = v.shape[0] / source_size[k].shape[0]
-            assert ratio is None or ratio == new_ratio
-            ratio = new_ratio
-    # scale mean/std of layernorm appropriately so they have the correct scale from the source network
-    print(f"Scaling layernorm by {ratio} due to added padding")
-    (model_hparams, _), model, _ = get_open_lth_ckpt(args.target_size_ckpt, layernorm_scaling=ratio)
 
 train_dataloader, test_dataloader = get_open_lth_data(dataset_hparams, args.n_train, args.n_test)
 print(model_hparams.display)
@@ -60,9 +45,6 @@ print(dataset_hparams.display)
 
 def load_and_apply_permutation(params, perm_file):
     perm, perm_spec = PermutationSpec.load_from_file(perm_file)
-    if args.target_size_ckpt is not None:  # pad params
-        target_size = perm_spec.get_sizes(size_params)
-        params = perm_spec.apply_padding(params, target_size)
     return perm_spec.apply_permutation(params, perm)
 
 

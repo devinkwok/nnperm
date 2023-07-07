@@ -37,7 +37,6 @@ parser.add_argument('--ckpt_a', required=True, type=Path)
 parser.add_argument('--ckpt_b', required=True, type=Path)
 parser.add_argument('--perm_a', default=None, type=Path)
 parser.add_argument('--perm_b', default=None, type=Path)
-parser.add_argument('--target_size_ckpt', default=None, type=Path)  # load this model instead of the ckpts at repdir_a or repdir_b, if doing partial align to a wider network
 parser.add_argument('--n_test', default=10000, type=int)
 parser.add_argument('--batch_size', default=100, type=int)
 parser.add_argument('--save_file', required=True, type=Path)
@@ -198,19 +197,6 @@ if not args.debug:
         perm_a, perm_spec = PermutationSpec.load_from_file(args.perm_a)
     if args.perm_b is not None:
         perm_b, perm_spec = PermutationSpec.load_from_file(args.perm_b)
-    # TODO temporary hack for layernorm
-    if args.target_size_ckpt is not None:
-        _, _, size_params = get_open_lth_ckpt(args.target_size_ckpt)
-        # make sure sizes differ by constant ratio
-        ratio = None
-        for k, v in size_params.items():
-            if "layernorm" in k:
-                new_ratio = v.shape[0] / params_a[k].shape[0]
-                assert ratio is None or ratio == new_ratio
-                ratio = new_ratio
-        # scale mean/std of layernorm appropriately so they have the correct scale from the source network
-        print(f"Scaling layernorm by {ratio} due to added padding")
-        (model_hparams, _), model, params_for_perm_spec = get_open_lth_ckpt(args.target_size_ckpt, layernorm_scaling=ratio)
     # create new perm_spec when both perm_a and perm_b are None
     if perm_spec is None:  
         if "resnet" in model_hparams.model_name:
