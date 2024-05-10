@@ -7,3 +7,6 @@ refactor-outputs
 TODO.txt
 slurm-scripts
 test_scripts
+scripts
+plots
+example-scripts
