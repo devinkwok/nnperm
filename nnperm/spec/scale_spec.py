@@ -89,6 +89,23 @@ class Scales(dict):
 
 
 class ScaleSpec(ModelSpec):
+
+    @classmethod
+    def from_sequential_model(cls, state_dict: Dict[str, nn.Module], input_dim=1, output_dim=0, exclude=[".running_mean", ".running_var"], norm_key=".bn."):
+        spec = super().from_sequential_model(state_dict, input_dim=input_dim, output_dim=output_dim)
+        # remove running mean and var
+        for k in spec.keys():
+            if not is_valid_key(k, exclude_keywords=exclude):
+                del spec[k]
+        # remove any layers in a scale group that precede normalization
+        # i.e.: we can scale the weights and biases of the norm layer, and then apply the inverse scaling to the next weights
+        # TODO hack: we will assume there is only one layer after each normalization, so we just need to remove all groups assigned to the output_dim unless i t is a norm layer
+        for k, v in spec.items():
+            if norm_key not in k:
+                v[output_dim] = None
+        spec = {k: tuple(v) for k, v in spec.items()}
+        return cls(spec)
+
     """
         axes_to_group: str (name of layer): Tuple[ (for each dim in layer shape) Union[None (dim not scaled), Tuple[str (name of scale assigned to dim), bool (if input and scaling is inverted)]]]
         group_to_axes: str (names of distinct scales): List[Tuple[str (name of layer with scale), int (dim with this scale), bool (if input and scaling is inverted)]]
