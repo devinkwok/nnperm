@@ -3,7 +3,7 @@ from typing import Dict, List
 import numpy as np
 import torch.nn as nn
 
-from nnperm.spec.model_spec import ModelSpec
+from nnperm.spec.model_spec import ModelSpec, sequential_model_spec
 from nnperm.utils import is_valid_key
 
 
@@ -92,11 +92,9 @@ class ScaleSpec(ModelSpec):
 
     @classmethod
     def from_sequential_model(cls, state_dict: Dict[str, nn.Module], input_dim=1, output_dim=0, exclude=[".running_mean", ".running_var"], norm_key=".bn."):
-        spec = super().from_sequential_model(state_dict, input_dim=input_dim, output_dim=output_dim)
+        spec = sequential_model_spec(state_dict, input_dim=input_dim, output_dim=output_dim)
         # remove running mean and var
-        for k in spec.keys():
-            if not is_valid_key(k, exclude_keywords=exclude):
-                del spec[k]
+        spec = {k: v for k, v in spec.items() if is_valid_key(k, exclude_keywords=exclude)}
         # remove any layers in a scale group that precede normalization
         # i.e.: we can scale the weights and biases of the norm layer, and then apply the inverse scaling to the next weights
         # TODO hack: we will assume there is only one layer after each normalization, so we just need to remove all groups assigned to the output_dim unless i t is a norm layer
