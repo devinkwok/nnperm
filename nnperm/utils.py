@@ -4,31 +4,6 @@ import torch
 import numpy as np
 
 
-import sys
-sys.path.append("open_lth")
-from open_lth.api import get_ckpt, get_dataset_hparams, get_dataloader, find_ckpt_by_it, get_device
-from open_lth.pruning.sparse_global import PruningHparams, Strategy
-from open_lth.utils.tensor_utils import vectorize, unvectorize, shuffle_tensor, shuffle_state_dict
-
-
-def device():
-    return get_device()
-
-
-def get_open_lth_ckpt(*args, **kwargs):
-    return get_ckpt(*args, **kwargs)
-
-
-def get_open_lth_data(dataset_hparams, n_train, n_test, batch_size=5000):
-    train_dataloader = get_dataloader(dataset_hparams, n_train, train=True, batch_size=batch_size)
-    test_dataloader = get_dataloader(dataset_hparams, n_test, train=False, batch_size=batch_size)
-    return train_dataloader, test_dataloader
-
-
-def find_open_lth_ckpt(replicate_dir, ep_it):
-    return find_ckpt_by_it(replicate_dir, ep_it)
-
-
 def multiplicative_weight_noise(state_dict, std, n_layers=-1,
         include_keywords=[], exclude_keywords=[],
     ):
@@ -42,12 +17,6 @@ def multiplicative_weight_noise(state_dict, std, n_layers=-1,
                 state_dict[k] = v * noise
                 n_layers -= 1
     return state_dict
-
-
-def prune(model, fraction: float, type: str = 'sparse_global', randomize: str = 'identity', seed: int = 42):
-    #TODO FIX # model, mask = one_shot_prune(model, fraction, type=type, randomize=randomize, seed=seed, layers_to_ignore="fc.weight")
-    raise NotImplementedError
-    return model, mask
 
 
 def to_torch_device(state_dict: Dict[str, np.ndarray], device="cuda"):
