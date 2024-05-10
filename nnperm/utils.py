@@ -6,7 +6,7 @@ import numpy as np
 
 import sys
 sys.path.append("open_lth")
-from open_lth.api import get_ckpt, get_dataset_hparams, get_dataloader, find_ckpt_by_it, get_device, one_shot_prune
+from open_lth.api import get_ckpt, get_dataset_hparams, get_dataloader, find_ckpt_by_it, get_device
 from open_lth.pruning.sparse_global import PruningHparams, Strategy
 from open_lth.utils.tensor_utils import vectorize, unvectorize, shuffle_tensor, shuffle_state_dict
 
@@ -45,7 +45,8 @@ def multiplicative_weight_noise(state_dict, std, n_layers=-1,
 
 
 def prune(model, fraction: float, type: str = 'sparse_global', randomize: str = 'identity', seed: int = 42):
-    model, mask = one_shot_prune(model, fraction, type=type, randomize=randomize, seed=seed, layers_to_ignore="fc.weight")
+    #TODO FIX # model, mask = one_shot_prune(model, fraction, type=type, randomize=randomize, seed=seed, layers_to_ignore="fc.weight")
+    raise NotImplementedError
     return model, mask
 
 
