@@ -184,7 +184,7 @@ class ScaleSpec(ModelSpec):
         return self._transform_state_dict(self.scale_layer, state_dict, scales)
 
     def get_random_scale(self, state_dict: Dict[str, nn.Module], random_state=None, scale_min=0.9, scale_max=1.1):
-        random_state = np.random.RandomState(42) if random_state is None else random_state
+        random_state = np.random.RandomState() if random_state is None else random_state
         rand_scale_fn = lambda p: random_state.uniform(scale_min, scale_max, self.layer_size(p))
         return Scales(self._generate_transform(rand_scale_fn, state_dict))
 

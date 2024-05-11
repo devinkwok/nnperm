@@ -12,7 +12,7 @@ class PermutationSpec(ModelSpec):
         group_to_axes: str (names of distinct perms): List[Tuple[str (name of layer with perm), int (dim with this perm), bool (if input)]]
     """
     def get_random_permutation(self, state_dict: Dict[str, np.ndarray], random_state=None):
-        random_state = np.random.RandomState(42) if random_state is None else random_state
+        random_state = np.random.RandomState() if random_state is None else random_state
         rand_perm_fn = lambda p: random_state.permutation(self.layer_size(p))
         return Permutations(self._generate_transform(rand_perm_fn, state_dict))
 
