@@ -1,20 +1,28 @@
+from copy import deepcopy
 from collections import defaultdict
 from typing import Dict, List
 import numpy as np
+import torch
 import torch.nn as nn
+from re import match
 
 from nnperm.spec.model_spec import ModelSpec, sequential_model_spec
-from nnperm.utils import is_valid_key
+from nnperm.utils import is_valid_key, to_numpy
+
+
+def broadcast_vec_to_array(array, vec, axis):
+    assert len(vec) == array.shape[axis]
+    broadcast_shape = np.ones_like(array.shape)
+    broadcast_shape[axis] = -1
+    return vec.reshape(*broadcast_shape)
 
 
 def multiply_along_axis(array, scale, axis):
-    assert len(scale) == array.shape[axis]
-    broadcast_shape = np.ones_like(array.shape)
-    broadcast_shape[axis] = -1
-    return array * scale.reshape(*broadcast_shape)
+    return array * broadcast_vec_to_array(array, scale, axis)
 
 
 def rollback_normalization(linear_w, linear_b, norm_w, norm_b, var_est, mu_est, output_dim=0):
+    #TODO needs reworking
     """Combines normalization affine transform and stats into single weight and bias.
     Specifically, if w and b are the weights and biases of a linear transform,
     and mu, sd, gamma, beta are the parameters of a normalization layer:
@@ -89,7 +97,10 @@ class Scales(dict):
 
 
 class ScaleSpec(ModelSpec):
-
+    """
+        axes_to_group: str (name of layer): Tuple[ (for each dim in layer shape) Union[None (dim not scaled), Tuple[str (name of scale assigned to dim), bool (if input and scaling is inverted)]]]
+        group_to_axes: str (names of distinct scales): List[Tuple[str (name of layer with scale), int (dim with this scale), bool (if input and scaling is inverted)]]
+    """
     @classmethod
     def from_sequential_model(cls, state_dict: Dict[str, nn.Module], input_dim=1, output_dim=0, exclude=[".running_mean", ".running_var"], norm_key=".bn."):
         spec = sequential_model_spec(state_dict, input_dim=input_dim, output_dim=output_dim)
@@ -97,17 +108,26 @@ class ScaleSpec(ModelSpec):
         spec = {k: v for k, v in spec.items() if is_valid_key(k, exclude_keywords=exclude)}
         # remove any layers in a scale group that precede normalization
         # i.e.: we can scale the weights and biases of the norm layer, and then apply the inverse scaling to the next weights
-        # TODO hack: we will assume there is only one layer after each normalization, so we just need to remove all groups assigned to the output_dim unless i t is a norm layer
+        # TODO hack: we will assume there is only one layer after each normalization, so we just need to remove all groups assigned to the output_dim unless it is a norm layer
         for k, v in spec.items():
             if norm_key not in k:
                 v[output_dim] = None
-        spec = {k: tuple(v) for k, v in spec.items()}
+        spec = {k: tuple(v) for k, v in spec.items() if v is not None}
         return cls(spec)
+    
+    def get_sequential_norm_scale(self, state_dict: Dict[str, nn.Module], norm_weight_key=".*\.bn.*\.weight$"):
+        scale = {}
+        for group_k, v in self.group_to_axes.items():
+            for param_k, dim, is_inverted in v:
+                if match(norm_weight_key, param_k):
+                    scale[group_k] = state_dict[param_k]
+        scale = Scales(to_numpy(scale)).inverse()
+        return scale
 
-    """
-        axes_to_group: str (name of layer): Tuple[ (for each dim in layer shape) Union[None (dim not scaled), Tuple[str (name of scale assigned to dim), bool (if input and scaling is inverted)]]]
-        group_to_axes: str (names of distinct scales): List[Tuple[str (name of layer with scale), int (dim with this scale), bool (if input and scaling is inverted)]]
-    """
+    def apply_rollback_sequential_norm(self, state_dict: Dict[str, nn.Module], norm_weight_key=".*\.bn.*\.weight$"):
+        scale = self.get_sequential_norm_scale(state_dict, norm_weight_key=norm_weight_key)
+        return self.apply_scale(state_dict, scale)
+
     def apply_rollback_layernorm(self, state_dict: Dict[str, nn.Module], layernorm_key="layernorm"):
         """WARNING: this will not automatically give an equivalent function.
         To keep the function unchanged, the computed mean and std of LayerNorm layers
@@ -116,6 +136,7 @@ class ScaleSpec(ModelSpec):
         pass #TODO
 
     def apply_rollback_batchnorm(self, state_dict: Dict[str, nn.Module], batchnorm_key="bn"):
+        #TODO needs reworking
         output = {}
 
         def update_param(key, value):
@@ -149,6 +170,7 @@ class ScaleSpec(ModelSpec):
 
     @staticmethod
     def _channel_norm(params, normalize=False):
+        #TODO needs reworking
         #FIXME need to account for input AND output scaling
         flat_params = []
         for layer, dim, is_input in params:
