@@ -3,14 +3,7 @@
 
 ## Requirements
 
-Uses `open_lth` fork to train and run models.
-
-Clone this repository and run `git submodule init && git submodule update` to automatically pull the correct `open_lth` dependency.
-Install requirements using `pip install -r requirements.txt` (this is done automatically by `open_lth/slurm-setup.sh`).
-
-Note: the `open_lth` fork assumes experiments are saved to `$HOME/scratch/open_lth_data/`, and data is in `$SLURM_TMPDIR/data`.
-To automatically setup `virtualenv`, install `requirements.txt`, and copy data to `$SLURM_TMPDIR`, call `source open_lth/slurm-setup.sh [DATASETS] [...]`.
-This will copy the contents of `$HOME/data/[DATASETS]` to `$SLURM_TMPDIR` and extract any `.tar.gz` archives.
+Unit tests require `open_lth` fork to train and run models.
 
 ## Usage
 

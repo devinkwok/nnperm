@@ -17,7 +17,7 @@ from nnperm.spec import PermutationSpec, ScaleSpec
 from nnperm.align import *
 from nnperm.eval import evaluate_model
 from nnperm.barrier import EnsembleModel, interpolate_dict
-from nnperm.utils import to_torch_device, keys_match, multiplicative_weight_noise, to_numpy
+from nnperm.dict_utils import to_torch_device, keys_match, multiplicative_weight_noise, to_numpy
 
 
 class TestNNPerm(unittest.TestCase):

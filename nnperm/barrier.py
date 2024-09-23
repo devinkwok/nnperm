@@ -5,7 +5,7 @@ from tqdm import tqdm
 import torch.nn as nn
 import numpy as np
 
-from nnperm.utils import to_torch_device
+from nnperm.dict_utils import to_torch_device
 from nnperm.eval import evaluate_model
 
 

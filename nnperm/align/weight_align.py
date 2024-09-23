@@ -7,7 +7,7 @@ from scipy.optimize import linear_sum_assignment
 
 from nnperm.perm import perm_compose
 from nnperm.spec import PermutationSpec
-from nnperm.utils import keys_match, to_numpy
+from nnperm.dict_utils import keys_match, to_numpy
 from nnperm.align.kernel import get_kernel_from_name
 
 

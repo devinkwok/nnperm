@@ -4,7 +4,7 @@ import numpy as np
 import torch.nn as nn
 
 from nnperm.spec.model_spec import ModelSpec
-from nnperm.utils import is_valid_key
+from nnperm.dict_utils import is_valid_key
 
 
 def multiply_along_axis(array, scale, axis):

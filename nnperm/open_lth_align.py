@@ -4,7 +4,10 @@ from pathlib import Path
 
 from nnperm.align import WeightAlignment, ActivationAlignment, PartialActivationAlignment, PartialWeightAlignment
 from nnperm.spec import PermutationSpec
-from nnperm.utils import get_open_lth_ckpt, get_dataloader, get_device, prune
+
+import sys
+sys.path.append("../open_lth")
+from api import get_checkpoint, get_dataloader, get_device, prune
 
 
 ## Setup

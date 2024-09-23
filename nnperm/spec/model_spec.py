@@ -4,7 +4,7 @@ from re import match
 import numpy as np
 import torch.nn as nn
 from typing import Dict, List, Tuple, Union
-from nnperm.utils import is_valid_key, to_numpy
+from nnperm.dict_utils import is_valid_key, to_numpy
 
 
 def sequential_model_spec(state_dict: Dict[str, nn.Module], input_dim=1, output_dim=0):
@@ -87,8 +87,8 @@ class ModelSpec:
         group_to_axes: str (names of distinct groups): List[Tuple[str (name of layer with group), int (dim with this group), bool (if input)]]
     """
     def __init__(self,
-            axes_to_group: Dict[str, Tuple[Union[None, str]]],
-            group_to_axes: Dict[str, List[Tuple[str, int]]] = None,
+            axes_to_group: Dict[str, Tuple[Union[None, Tuple[str, bool]]]],
+            group_to_axes: Dict[str, List[Tuple[str, int, bool]]] = None,
     ):
         self.axes_to_group = axes_to_group
         if group_to_axes is None:
